@@ -658,24 +658,6 @@
             const removeTeam = (index) => { SoundService.playClick(); setNames(names.filter((_, i) => i !== index)); };
             const updateName = (index, value) => { const u = [...names]; u[index] = value; setNames(u); };
 
-            const handleKeyDown = (e, index) => {
-                if (e.key === 'Enter') {
-                    e.preventDefault();
-                    if (index < names.length - 1) {
-                        // Focus next input
-                        const nextInput = document.getElementById(`team-input-${index + 1}`);
-                        if (nextInput) nextInput.focus();
-                    } else if (names.length < MAX_TEAMS) {
-                        // Add new team and focus it
-                        addTeam();
-                        setTimeout(() => {
-                            const nextInput = document.getElementById(`team-input-${index + 1}`);
-                            if (nextInput) nextInput.focus();
-                        }, 50);
-                    }
-                }
-            };
-
             const handleStart = () => {
                 if (canStart) {
                     SoundService.init();
@@ -868,7 +850,19 @@
                                                     placeholder={`Team ${index + 1}`}
                                                     value={name}
                                                     onChange={(e) => updateName(index, e.target.value)}
-                                                    onKeyDown={(e) => handleKeyDown(e, index)}
+                                                    onKeyDown={(e) => {
+                                                        if (e.key === 'Enter') {
+                                                            e.preventDefault();
+                                                            if (index < names.length - 1) {
+                                                                document.getElementById(`team-input-${index + 1}`)?.focus();
+                                                            } else if (names.length < MAX_TEAMS) {
+                                                                addTeam();
+                                                                setTimeout(() => {
+                                                                    document.getElementById(`team-input-${index + 1}`)?.focus();
+                                                                }, 10);
+                                                            }
+                                                        }
+                                                    }}
                                                     className="flex-1 w-full bg-slate-900 border border-slate-700 rounded-md py-1.5 px-2 text-base focus:border-purple-500 focus:outline-none text-white font-bold"
                                                 />
                                                 {names.length > 1 && (
