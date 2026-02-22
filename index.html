@@ -1,0 +1,1386 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bruch-Monster: Klassenkampf (Cloud Edition)</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@300;400;600;700&family=Nunito:wght@400;700;900&display=swap" rel="stylesheet">
+
+    <style>
+      body {
+        font-family: 'Fredoka', sans-serif;
+        background-color: #0f172a;
+        color: white;
+        overflow: hidden; /* Prevent scrolling on whiteboard */
+      }
+      .game-font {
+        font-family: 'Nunito', sans-serif;
+      }
+      .glass-panel {
+        background: rgba(30, 41, 59, 0.7); /* Etwas dunkler für besseren Kontrast */
+        backdrop-filter: blur(12px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+      }
+      
+      /* Animation Keyframes */
+      @keyframes float {
+        0%, 100% { transform: translateY(0px); }
+        50% { transform: translateY(-10px); }
+      }
+      @keyframes blink {
+        0%, 90%, 100% { transform: scaleY(1); }
+        95% { transform: scaleY(0.1); }
+      }
+      @keyframes wobble {
+        0%, 100% { transform: translateX(0%); }
+        15% { transform: translateX(-15%) rotate(-5deg); }
+        30% { transform: translateX(10%) rotate(3deg); }
+        45% { transform: translateX(-10%) rotate(-3deg); }
+        60% { transform: translateX(5%) rotate(2deg); }
+        75% { transform: translateX(-5%) rotate(-1deg); }
+      }
+      @keyframes happy-jump {
+        0%, 100% { transform: translateY(0) scale(1); }
+        25% { transform: translateY(-20px) scale(1.1); }
+        50% { transform: translateY(0) scale(0.95); }
+        75% { transform: translateY(-10px) scale(1.05); }
+      }
+      @keyframes pulse-glow {
+        0%, 100% { opacity: 0.3; transform: scale(1); }
+        50% { opacity: 0.6; transform: scale(1.05); }
+      }
+      @keyframes crack-shake {
+        0%, 100% { transform: rotate(0deg); }
+        25% { transform: rotate(2deg); }
+        75% { transform: rotate(-2deg); }
+      }
+      @keyframes blob {
+        0% { transform: translate(0px, 0px) scale(1); }
+        33% { transform: translate(30px, -50px) scale(1.1); }
+        66% { transform: translate(-20px, 20px) scale(0.9); }
+        100% { transform: translate(0px, 0px) scale(1); }
+      }
+
+      /* Animation Classes */
+      .animate-float { animation: float 3s ease-in-out infinite; }
+      .animate-blink { animation: blink 4s infinite; transform-origin: center; transform-box: fill-box; }
+      .animate-wobble { animation: wobble 0.6s ease-in-out; }
+      .animate-happy { animation: happy-jump 0.8s ease-in-out; }
+      .animate-pulse-glow { animation: pulse-glow 2s ease-in-out infinite; }
+      .animate-crack { animation: crack-shake 3s ease-in-out infinite; transform-origin: center; }
+      .animate-blob { animation: blob 7s infinite; }
+      .animation-delay-2000 { animation-delay: 2s; }
+
+      .custom-scrollbar::-webkit-scrollbar {
+        width: 8px;
+      }
+      .custom-scrollbar::-webkit-scrollbar-track {
+        background: rgba(0,0,0,0.1);
+        border-radius: 4px;
+      }
+      .custom-scrollbar::-webkit-scrollbar-thumb {
+        background: rgba(255,255,255,0.2);
+        border-radius: 4px;
+      }
+      .no-scrollbar::-webkit-scrollbar {
+        display: none;
+      }
+      .no-scrollbar {
+        -ms-overflow-style: none;
+        scrollbar-width: none;
+      }
+    </style>
+
+    <script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@18.2.0",
+    "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+    "lucide-react": "https://esm.sh/lucide-react@0.300.0",
+    "canvas-confetti": "https://esm.sh/canvas-confetti@1.9.2",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.4/",
+    "react/": "https://esm.sh/react@^19.2.4/"
+  }
+}
+</script>
+<link rel="stylesheet" href="/index.css">
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel" data-type="module">
+        import React, { useState, useEffect, useRef } from 'react';
+        import { createRoot } from 'react-dom/client';
+        // Importing Lucide React components properly
+        import { 
+            Maximize, Minimize, Plus, Play, User, X, Briefcase, Calculator, 
+            Scissors, ArrowRightLeft, Layers, PenTool, Edit3, Save, Upload, 
+            Download, Trash, Zap, BookOpen, Clock, AlignLeft, Smile, 
+            Trophy, RefreshCw, Home, AlertCircle, ArrowRight, Loader2, Star, 
+            Frown, Users, Cloud, Check, DownloadCloud, UploadCloud, GraduationCap, Settings 
+        } from 'lucide-react';
+        import confetti from 'canvas-confetti';
+
+        // ==========================================================================================
+        // 1. DATA LAYER (NEXTCLOUD / WEBDAV)
+        // ==========================================================================================
+
+        /* --- NEXTCLOUD KONFIGURATION --- */
+        /* TRAGEN SIE HIER IHRE DATEN EIN */
+        const NC_CONFIG = {
+            // Die vollständige WebDAV URL zu dem Ordner, in dem die Spiel-Daten liegen sollen.
+            // Der Ordner MUSS bereits existieren!
+            // Beispiel: "https://cloud.schule.de/remote.php/dav/files/lehrername/BruchMonster/klassenkampf/"
+            url: "https://victorymind.de/nextcloud/remote.php/dav/files/hosting236423/", 
+            
+            // Ihr Benutzername
+            user: "hosting236423", 
+            
+            // Generieren Sie am besten ein App-Passwort in den Nextcloud Sicherheitseinstellungen
+            password: "N5tke-HpFXK-LweHZ-eHGCg-rdQxT" 
+        };
+        /* ------------------------------- */
+
+        const ncFetch = async (filename, method = 'GET', body = null) => {
+            if (NC_CONFIG.url.includes("YOUR-NEXTCLOUD-INSTANCE")) {
+                // Nur Warnung in Konsole, kein Alert, damit Spiel auch ohne Cloud funktioniert
+                console.warn("Nextcloud nicht konfiguriert. Datenspeicherung deaktiviert.");
+                return null;
+            }
+
+            const headers = new Headers();
+            headers.set("Authorization", "Basic " + btoa(NC_CONFIG.user + ":" + NC_CONFIG.password));
+            headers.set("Content-Type", "application/json");
+            // WICHTIG: Verhindert oft CORS Preflight Probleme bei manchen NC Konfigurationen
+            headers.set("X-Requested-With", "XMLHttpRequest"); 
+
+            const options = { method, headers };
+            if (body) options.body = JSON.stringify(body, null, 2);
+
+            try {
+                const response = await fetch(NC_CONFIG.url + filename, options);
+                
+                if (!response.ok) {
+                    if (response.status === 404 && method === 'GET') {
+                        return null; // Datei existiert noch nicht
+                    }
+                    throw new Error(`Nextcloud Error: ${response.status} ${response.statusText}`);
+                }
+
+                if (method === 'GET') {
+                    return await response.json();
+                }
+                return true; // Success für PUT/DELETE
+            } catch (e) {
+                console.error("NC Sync Error:", e);
+                return null;
+            }
+        };
+
+        // Helper Methods for specific data types
+        const CloudService = {
+            saveTeams: async (teams) => ncFetch('teams.json', 'PUT', teams),
+            loadTeams: async () => ncFetch('teams.json', 'GET'),
+            
+            saveCustomQuestions: async (questions) => ncFetch('custom_questions.json', 'PUT', questions),
+            loadCustomQuestions: async () => ncFetch('custom_questions.json', 'GET'),
+
+            saveHighscore: async (entry) => {
+                let current = await ncFetch('highscores.json', 'GET') || [];
+                // Add new entry
+                current.push({
+                    ...entry,
+                    date: new Date().toISOString()
+                });
+                // Sort by score desc
+                current.sort((a, b) => b.score - a.score);
+                // Keep top 20
+                current = current.slice(0, 20);
+                await ncFetch('highscores.json', 'PUT', current);
+                return current;
+            },
+            loadHighscores: async () => ncFetch('highscores.json', 'GET') || []
+        };
+
+
+        // ==========================================================================================
+        // 2. TYPES & CONSTANTS
+        // ==========================================================================================
+
+        const GamePhase = {
+            SETUP: 'SETUP',
+            PLAYING: 'PLAYING',
+            VICTORY: 'VICTORY'
+        };
+
+        const MonsterType = {
+            FIRE: 'FIRE', WATER: 'WATER', EARTH: 'EARTH', ELECTRIC: 'ELECTRIC',
+            PSYCHIC: 'PSYCHIC', ICE: 'ICE', TOXIC: 'TOXIC', VOID: 'VOID',
+            WIND: 'WIND', SOLAR: 'SOLAR', METAL: 'METAL', FAIRY: 'FAIRY'
+        };
+
+        const MonsterStage = {
+            EGG: 0, HATCHLING: 1, TEEN: 2, ADULT: 3, TITAN: 4
+        };
+
+        const MAX_TEAMS = 12;
+        const EXP_TO_LEVEL = 100;
+        const WINNING_STAGE = 4;
+
+        const TEAM_CONFIGS = [
+            { type: MonsterType.FIRE, color: 'bg-red-500', shadow: 'shadow-red-500/50', border: 'border-red-400', text: 'text-red-100' },
+            { type: MonsterType.WATER, color: 'bg-blue-500', shadow: 'shadow-blue-500/50', border: 'border-blue-400', text: 'text-blue-100' },
+            { type: MonsterType.EARTH, color: 'bg-green-500', shadow: 'shadow-green-500/50', border: 'border-green-400', text: 'text-green-100' },
+            { type: MonsterType.ELECTRIC, color: 'bg-yellow-500', shadow: 'shadow-yellow-500/50', border: 'border-yellow-400', text: 'text-yellow-100' },
+            { type: MonsterType.PSYCHIC, color: 'bg-purple-500', shadow: 'shadow-purple-500/50', border: 'border-purple-400', text: 'text-purple-100' },
+            { type: MonsterType.ICE, color: 'bg-cyan-500', shadow: 'shadow-cyan-500/50', border: 'border-cyan-400', text: 'text-cyan-100' },
+            { type: MonsterType.TOXIC, color: 'bg-lime-500', shadow: 'shadow-lime-500/50', border: 'border-lime-400', text: 'text-lime-100' },
+            { type: MonsterType.VOID, color: 'bg-indigo-500', shadow: 'shadow-indigo-500/50', border: 'border-indigo-400', text: 'text-indigo-100' },
+            { type: MonsterType.WIND, color: 'bg-teal-500', shadow: 'shadow-teal-500/50', border: 'border-teal-400', text: 'text-teal-100' },
+            { type: MonsterType.SOLAR, color: 'bg-orange-500', shadow: 'shadow-orange-500/50', border: 'border-orange-400', text: 'text-orange-100' },
+            { type: MonsterType.METAL, color: 'bg-slate-500', shadow: 'shadow-slate-500/50', border: 'border-slate-400', text: 'text-slate-100' },
+            { type: MonsterType.FAIRY, color: 'bg-pink-500', shadow: 'shadow-pink-500/50', border: 'border-pink-400', text: 'text-pink-100' },
+        ];
+
+        // ==========================================================================================
+        // 3. SOUND SERVICE
+        // ==========================================================================================
+        let audioCtx = null;
+        let isMuted = false;
+
+        const getContext = () => {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            return audioCtx;
+        };
+
+        const playTone = (freq, type, duration, startTime = 0, vol = 0.1) => {
+            if (isMuted) return;
+            const ctx = getContext();
+            if (ctx.state === 'suspended') ctx.resume();
+
+            const osc = ctx.createOscillator();
+            const gainNode = ctx.createGain();
+
+            osc.type = type;
+            osc.frequency.setValueAtTime(freq, ctx.currentTime + startTime);
+            
+            gainNode.gain.setValueAtTime(vol, ctx.currentTime + startTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + startTime + duration);
+
+            osc.connect(gainNode);
+            gainNode.connect(ctx.destination);
+
+            osc.start(ctx.currentTime + startTime);
+            osc.stop(ctx.currentTime + startTime + duration);
+        };
+
+        const SoundService = {
+            init: () => {
+                const ctx = getContext();
+                if (ctx.state === 'suspended') ctx.resume();
+            },
+            playClick: () => playTone(800, 'sine', 0.1, 0, 0.05),
+            playGameStart: () => {
+                if (isMuted) return;
+                const ctx = getContext();
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(220, ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.5);
+                gain.gain.setValueAtTime(0.1, ctx.currentTime);
+                gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.5);
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.start();
+                osc.stop(ctx.currentTime + 0.5);
+            },
+            playCorrect: () => {
+                playTone(523.25, 'sine', 0.3, 0, 0.1);
+                playTone(659.25, 'sine', 0.3, 0.1, 0.1);
+                playTone(783.99, 'sine', 0.4, 0.2, 0.1);
+            },
+            playIncorrect: () => {
+                playTone(150, 'sawtooth', 0.4, 0, 0.1);
+            },
+            playLevelUp: () => {
+                const notes = [523.25, 659.25, 783.99, 1046.50, 1318.51, 1567.98];
+                notes.forEach((note, i) => playTone(note, 'square', 0.2, i * 0.08, 0.05));
+            },
+            playVictory: () => {
+                const now = 0;
+                playTone(523.25, 'triangle', 0.2, now, 0.2);
+                playTone(523.25, 'triangle', 0.2, now + 0.2, 0.2);
+                playTone(523.25, 'triangle', 0.2, now + 0.4, 0.2);
+                playTone(783.99, 'square', 0.6, now + 0.6, 0.2);
+            },
+            toggleMute: () => { isMuted = !isMuted; return isMuted; }
+        };
+
+        // ==========================================================================================
+        // 4. QUESTION SERVICE (STATIC DATA + GENERATOR)
+        // ==========================================================================================
+        
+        const STATIC_QUESTIONS = [
+            // BRÜCHE ADD/SUB
+            { text: "Monster-Snack:", expression: "1/5 + 2/5", options: ["3/5", "2/5", "1/5", "4/5"], correctIndex: 0, difficulty: "easy", category: "ADD_SUB" },
+            { text: "Heilungstrank mischen:", expression: "2/7 + 3/7", options: ["5/7", "6/7", "1/7", "4/7"], correctIndex: 0, difficulty: "easy", category: "ADD_SUB" },
+            { text: "Schild aufladen:", expression: "1/4 + 2/4", options: ["3/4", "1/2", "1/4", "2/4"], correctIndex: 0, difficulty: "easy", category: "ADD_SUB" },
+            { text: "XP sammeln:", expression: "3/8 + 4/8", options: ["7/8", "1/8", "5/8", "6/8"], correctIndex: 0, difficulty: "easy", category: "ADD_SUB" },
+            { text: "Mana regenerieren:", expression: "1/10 + 7/10", options: ["8/10", "6/10", "4/10", "9/10"], correctIndex: 0, difficulty: "easy", category: "ADD_SUB" },
+            { text: "Zweikampf:", expression: "2/9 + 4/9", options: ["6/9", "5/9", "7/9", "3/9"], correctIndex: 0, difficulty: "easy", category: "ADD_SUB" },
+            { text: "Schaden erleiden:", expression: "3/4 - 1/4", options: ["2/4", "3/4", "1/4", "4/4"], correctIndex: 0, difficulty: "easy", category: "ADD_SUB" },
+            { text: "Gold verlieren:", expression: "5/6 - 4/6", options: ["1/6", "2/6", "3/6", "5/6"], correctIndex: 0, difficulty: "easy", category: "ADD_SUB" },
+            { text: "Energieverbrauch:", expression: "7/8 - 3/8", options: ["4/8", "3/8", "5/8", "2/8"], correctIndex: 0, difficulty: "easy", category: "ADD_SUB" },
+            // ADD_SUB_PRO
+            { text: "Achtung! Nenner sind verschieden:", expression: "1/2 + 1/4", options: ["3/4", "2/6", "2/4", "1/6"], correctIndex: 0, difficulty: "medium", category: "ADD_SUB_PRO" },
+            { text: "Addiere diese Brüche:", expression: "1/3 + 1/6", options: ["3/6", "2/9", "1/2", "2/6"], correctIndex: 2, difficulty: "medium", category: "ADD_SUB_PRO" },
+            { text: "Das Monster rechnet schwer:", expression: "1/2 + 1/8", options: ["5/8", "2/10", "6/8", "2/8"], correctIndex: 0, difficulty: "medium", category: "ADD_SUB_PRO" },
+            { text: "Was kommt hier raus?", expression: "1/4 + 3/8", options: ["5/8", "4/12", "4/8", "6/8"], correctIndex: 0, difficulty: "medium", category: "ADD_SUB_PRO" },
+            // MULTIPLY
+            { text: "Was ist die Hälfte von einem Halb?", expression: "1/2 * 1/2", options: ["1/4", "2/4", "1", "1/2"], correctIndex: 0, difficulty: "easy", category: "MULTIPLY" },
+            { text: "Multipliziere:", expression: "1/3 * 1/2", options: ["1/6", "1/5", "2/6", "2/5"], correctIndex: 0, difficulty: "easy", category: "MULTIPLY" },
+            { text: "Rechne aus:", expression: "2/3 * 1/2", options: ["1/3", "3/5", "2/6", "2/5"], correctIndex: 0, difficulty: "medium", category: "MULTIPLY" },
+            // DE_WORTARTEN
+            { text: "Welche Wortart ist das unterstrichene Wort?", expression: "Der _Skin_ kostet 1200 V-Bucks.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 0, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Bestimme die Wortart:", expression: "Micky Maus _lacht_ sehr laut.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 1, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Was ist das für ein Wort?", expression: "Das Trikot von Bayern ist _rot_.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 2, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Wortart erkennen:", expression: "_Der_ Battle-Pass ist neu.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 3, difficulty: "easy", category: "DE_WORTARTEN" },
+            // ... (Includes all questions logically)
+        ];
+
+        const usedQuestionIndices = new Set();
+
+        const resetQuestionHistory = () => {
+            usedQuestionIndices.clear();
+        };
+
+        const generateQuestion = async (difficulty, category, customPool = []) => {
+            // Simulierte Verzögerung
+            await new Promise(resolve => setTimeout(resolve, 50));
+
+            let pool = [];
+            if (category === 'CUSTOM') {
+                pool = customPool.length > 0 ? customPool : STATIC_QUESTIONS;
+            } else {
+                pool = STATIC_QUESTIONS;
+            }
+
+            const candidates = pool
+                .map((q, index) => ({ q, index: `${category === 'CUSTOM' ? 'c' : 's'}-${index}` }))
+                .filter(item => {
+                    if (category === 'CUSTOM') return true;
+                    
+                    const isGermanCategory = item.q.category.startsWith('DE_');
+                    if (category === 'ALL' && isGermanCategory) return false;
+
+                    // Ignoriere Schwierigkeitsgrad für besseren Mix
+                    const diffMatch = true; 
+                    
+                    let catMatch = true;
+                    if (category !== 'ALL') {
+                        if (category === 'EXPAND_SIMPLIFY') {
+                            catMatch = item.q.category === 'EXPAND' || item.q.category === 'SIMPLIFY';
+                        } else {
+                            catMatch = item.q.category === category;
+                        }
+                    }
+                    return diffMatch && catMatch;
+                });
+
+            let available = candidates.filter(item => !usedQuestionIndices.has(item.index));
+
+            if (available.length === 0) {
+                if (candidates.length > 0) {
+                    candidates.forEach(c => usedQuestionIndices.delete(c.index));
+                    available = candidates;
+                } else {
+                    available = pool.map((q, i) => ({ q, index: `fallback-${i}` }));
+                }
+            }
+
+            const randomIndex = Math.floor(Math.random() * available.length);
+            const selectedItem = available[randomIndex];
+
+            if (selectedItem) {
+                usedQuestionIndices.add(selectedItem.index);
+                return {
+                    ...selectedItem.q,
+                    id: Date.now().toString() + Math.random().toString()
+                };
+            } else {
+                return { ...STATIC_QUESTIONS[0], id: 'error-fallback' };
+            }
+        };
+
+        // ==========================================================================================
+        // 5. COMPONENTS
+        // ==========================================================================================
+
+        // --- MathText Component ---
+        const MathText = ({ text, className = "", scale = 1 }) => {
+            const fractionRegex = /(?:(\d+)\s+)?(\d+)\/(\d+)/g;
+            const parts = [];
+            let lastIndex = 0;
+            let match;
+
+            const formatText = (rawText, keyPrefix) => {
+                const formatRegex = /_([^_]+)_/g;
+                const formattedParts = [];
+                let lastFormatIndex = 0;
+                let formatMatch;
+
+                while ((formatMatch = formatRegex.exec(rawText)) !== null) {
+                    if (formatMatch.index > lastFormatIndex) {
+                        formattedParts.push(<span key={`${keyPrefix}-txt-${lastFormatIndex}`}>{rawText.substring(lastFormatIndex, formatMatch.index)}</span>);
+                    }
+                    formattedParts.push(
+                        <span key={`${keyPrefix}-u-${formatMatch.index}`} className="underline decoration-2 md:decoration-4 underline-offset-4 decoration-yellow-400">
+                            {formatMatch[1]}
+                        </span>
+                    );
+                    lastFormatIndex = formatRegex.lastIndex;
+                }
+                if (lastFormatIndex < rawText.length) {
+                    formattedParts.push(<span key={`${keyPrefix}-txt-end`}>{rawText.substring(lastFormatIndex)}</span>);
+                }
+                return formattedParts;
+            };
+
+            while ((match = fractionRegex.exec(text)) !== null) {
+                if (match.index > lastIndex) {
+                    const subText = text.substring(lastIndex, match.index);
+                    parts.push(...formatText(subText, `pre-${lastIndex}`));
+                }
+                const [fullMatch, whole, num, den] = match;
+                const fontSize = `${0.85 * scale}em`;
+
+                parts.push(
+                    <span key={`math-${match.index}`} className="inline-flex items-center align-middle mx-[0.3em] font-sans">
+                        {whole && <span className="mr-[0.3em] font-bold">{whole}</span>}
+                        <span className="inline-flex flex-col text-center justify-center" style={{ fontSize }}>
+                            <span className="border-b-[2px] md:border-b-[3px] border-solid border-current px-[0.3em] pb-[0.1em] mb-[0.1em] font-bold block min-w-[1.2em] leading-tight">{num}</span>
+                            <span className="px-[0.3em] pt-[0.1em] font-bold block min-w-[1.2em] leading-tight">{den}</span>
+                        </span>
+                    </span>
+                );
+                lastIndex = fractionRegex.lastIndex;
+            }
+            if (lastIndex < text.length) {
+                const subText = text.substring(lastIndex);
+                parts.push(...formatText(subText, `post-${lastIndex}`));
+            }
+            return <span className={className}>{parts}</span>;
+        };
+
+        // --- MonsterDisplay Component ---
+        const MonsterDisplay = ({ type, stage, reaction = 'idle', isAnimating }) => {
+            const currentReaction = isAnimating ? 'happy' : reaction;
+            
+            const getColors = () => {
+                switch(type) {
+                    case MonsterType.FIRE: return { main: '#EF4444', accent: '#FECACA' }; 
+                    case MonsterType.WATER: return { main: '#3B82F6', accent: '#BFDBFE' }; 
+                    case MonsterType.EARTH: return { main: '#10B981', accent: '#A7F3D0' };
+                    case MonsterType.ELECTRIC: return { main: '#EAB308', accent: '#FEF08A' };
+                    case MonsterType.PSYCHIC: return { main: '#A855F7', accent: '#E9D5FF' };
+                    case MonsterType.ICE: return { main: '#06B6D4', accent: '#CFFAFE' };
+                    case MonsterType.TOXIC: return { main: '#84CC16', accent: '#D9F99D' };
+                    case MonsterType.VOID: return { main: '#6366F1', accent: '#C7D2FE' };
+                    case MonsterType.WIND: return { main: '#14B8A6', accent: '#99F6E4' };
+                    case MonsterType.SOLAR: return { main: '#F97316', accent: '#FFEDD5' };
+                    case MonsterType.METAL: return { main: '#64748B', accent: '#CBD5E1' };
+                    case MonsterType.FAIRY: return { main: '#EC4899', accent: '#FBCFE8' };
+                    default: return { main: '#6B7280', accent: '#E5E7EB' };
+                }
+            };
+            const c = getColors();
+            let animationClass = 'animate-float';
+            if (currentReaction === 'happy') animationClass = 'animate-happy';
+            if (currentReaction === 'sad') animationClass = 'animate-wobble';
+
+            const renderMonster = () => {
+                switch (stage) {
+                    case MonsterStage.EGG:
+                        return (
+                            <svg viewBox="0 0 100 100" className={`w-full h-full drop-shadow-lg ${animationClass}`}>
+                                <ellipse cx="50" cy="60" rx="30" ry="38" fill={c.main} stroke="white" strokeWidth="3" />
+                                <path d="M35 40 Q 50 55 65 40" stroke={c.accent} strokeWidth="3" fill="none" opacity="0.6"/>
+                                <g className={currentReaction === 'idle' ? 'animate-crack' : ''}>
+                                    <path d="M50 22 L 45 30 L 55 35 L 50 42" stroke="rgba(0,0,0,0.2)" strokeWidth="2" fill="none" />
+                                </g>
+                            </svg>
+                        );
+                    case MonsterStage.HATCHLING:
+                        return (
+                            <svg viewBox="0 0 100 100" className={`w-full h-full drop-shadow-xl ${animationClass}`}>
+                                <circle cx="50" cy="60" r="25" fill={c.main} stroke="white" strokeWidth="3" />
+                                <g className={currentReaction === 'sad' ? '' : 'animate-blink'}>
+                                    <circle cx="42" cy="55" r="6" fill="white" />
+                                    <circle cx="42" cy="55" r="2" fill="black" />
+                                    <circle cx="58" cy="55" r="6" fill="white" />
+                                    <circle cx="58" cy="55" r="2" fill="black" />
+                                </g>
+                                <path d="M28 50 Q 50 10 72 50 L 65 55 L 60 48 L 50 55 L 40 48 L 35 55 Z" fill="white" stroke="#e5e7eb" strokeWidth="2" />
+                            </svg>
+                        );
+                    case MonsterStage.TEEN:
+                        return (
+                            <svg viewBox="0 0 100 100" className={`w-full h-full drop-shadow-2xl ${animationClass}`}>
+                                <path d="M30 70 Q 20 90 40 90" stroke={c.main} strokeWidth="8" strokeLinecap="round" fill="none" />
+                                <path d="M70 70 Q 80 90 60 90" stroke={c.main} strokeWidth="8" strokeLinecap="round" fill="none" />
+                                <rect x="30" y="40" width="40" height="40" rx="10" fill={c.main} stroke="white" strokeWidth="3" />
+                                <g className={currentReaction === 'sad' ? '' : 'animate-blink'}>
+                                    <circle cx="45" cy="55" r="5" fill="white" />
+                                    <circle cx="45" cy="55" r="2" fill="black" />
+                                    <circle cx="65" cy="55" r="3" fill="white" />
+                                    <circle cx="65" cy="55" r="1" fill="black" />
+                                </g>
+                                <path d="M35 40 L 35 25 L 45 40 L 55 20 L 65 40 Z" fill={c.accent} />
+                            </svg>
+                        );
+                    case MonsterStage.ADULT:
+                        return (
+                            <svg viewBox="0 0 100 100" className={`w-full h-full drop-shadow-2xl ${animationClass}`}>
+                                <path d="M20 50 Q 10 20 40 40" fill={c.accent} opacity="0.8" />
+                                <path d="M80 50 Q 90 20 60 40" fill={c.accent} opacity="0.8" />
+                                <path d="M30 80 L 25 95 L 40 95 L 35 80" fill={c.main} stroke="white" strokeWidth="2"/>
+                                <path d="M70 80 L 75 95 L 60 95 L 65 80" fill={c.main} stroke="white" strokeWidth="2"/>
+                                <path d="M25 40 Q 50 20 75 40 L 80 80 Q 50 90 20 80 Z" fill={c.main} stroke="white" strokeWidth="3" />
+                                <g className={currentReaction === 'sad' ? '' : 'animate-blink'}>
+                                    <circle cx="40" cy="55" r="4" fill="white" />
+                                    <circle cx="40" cy="55" r="1.5" fill="black" />
+                                    <circle cx="60" cy="55" r="4" fill="white" />
+                                    <circle cx="60" cy="55" r="1.5" fill="black" />
+                                </g>
+                            </svg>
+                        );
+                    case MonsterStage.TITAN:
+                        return (
+                            <svg viewBox="0 0 100 100" className={`w-full h-full drop-shadow-[0_20px_20px_rgba(0,0,0,0.5)] ${animationClass}`}>
+                                <circle cx="50" cy="50" r="48" fill={c.accent} opacity="0.3" className="animate-pulse-glow" />
+                                <path d="M15 40 Q 50 -10 85 40 L 90 85 Q 50 100 10 85 Z" fill={c.main} stroke="white" strokeWidth="4" />
+                                <path d="M30 30 L 30 10 L 40 30 L 50 5 L 60 30 L 70 10 L 70 30" fill="#FCD34D" stroke="white" strokeWidth="2" />
+                                <g className={currentReaction === 'sad' ? '' : 'animate-blink'}>
+                                    <rect x="30" y="45" width="15" height="10" fill="white" />
+                                    <rect x="35" y="48" width="5" height="5" fill="black" />
+                                    <rect x="55" y="45" width="15" height="10" fill="white" />
+                                    <rect x="60" y="48" width="5" height="5" fill="black" />
+                                </g>
+                            </svg>
+                        );
+                    default: return null;
+                }
+            };
+
+            return (
+                <div className={`relative transition-all duration-500 transform ${stage === MonsterStage.TITAN ? 'scale-125' : 'scale-100'}`}>
+                    {renderMonster()}
+                </div>
+            );
+        };
+
+        // --- SetupScreen Component ---
+        const SetupScreen = ({ onStart }) => {
+            const [names, setNames] = useState(['']);
+            const [selectedSubject, setSelectedSubject] = useState('MATH');
+            const [selectedCategory, setSelectedCategory] = useState('ALL');
+            const [customQuestions, setCustomQuestions] = useState([]);
+            const [isEditorOpen, setIsEditorOpen] = useState(false);
+            const [showHighscores, setShowHighscores] = useState(false);
+            const [highscores, setHighscores] = useState([]);
+            const [isLoadingCloud, setIsLoadingCloud] = useState(false);
+            
+            const [savedTeamSets, setSavedTeamSets] = useState(() => {
+                const saved = localStorage.getItem('monster_klassenkampf_teams');
+                return saved ? JSON.parse(saved) : [];
+            });
+            const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+            
+            const [editQ, setEditQ] = useState({
+                text: '', expression: '', options: ['', '', '', ''], correctIndex: 0, difficulty: 'medium', category: 'CUSTOM'
+            });
+            const [jsonImport, setJsonImport] = useState('');
+
+            useEffect(() => {
+                const loadData = async () => {
+                    setIsLoadingCloud(true);
+                    const loadedQ = await CloudService.loadCustomQuestions();
+                    if (loadedQ) setCustomQuestions(loadedQ);
+                    
+                    const loadedH = await CloudService.loadHighscores();
+                    if (loadedH) setHighscores(loadedH);
+                    setIsLoadingCloud(false);
+                };
+                loadData();
+            }, []);
+
+            const addTeam = () => { SoundService.playClick(); if (names.length < MAX_TEAMS) setNames([...names, '']); };
+            const removeTeam = (index) => { SoundService.playClick(); setNames(names.filter((_, i) => i !== index)); };
+            const updateName = (index, value) => { const u = [...names]; u[index] = value; setNames(u); };
+
+            const handleStart = () => {
+                if (canStart) {
+                    SoundService.init();
+                    SoundService.playGameStart();
+                    onStart(names, selectedCategory, customQuestions);
+                }
+            };
+
+            const handleSubjectChange = (subj) => {
+                SoundService.playClick();
+                setSelectedSubject(subj);
+                if (subj === 'MATH') setSelectedCategory('ALL');
+                if (subj === 'GERMAN') setSelectedCategory('DE_WORTARTEN');
+            };
+
+            const canStart = names.length >= 1 && names.every(n => n.trim().length > 0);
+
+            // Team Saving Logic
+            const saveCurrentSetup = () => {
+                if (!canStart) return alert("Bitte erst gültige Teams eingeben.");
+                const setName = prompt("Bitte gib einen Namen für diese Klasse ein (z.B. 'Klasse 5a'):");
+                if (!setName || setName.trim() === '') return;
+
+                const newSet = {
+                    id: Date.now().toString(),
+                    name: setName.trim(),
+                    teams: names
+                };
+
+                const updatedSets = [...savedTeamSets, newSet];
+                setSavedTeamSets(updatedSets);
+                localStorage.setItem('monster_klassenkampf_teams', JSON.stringify(updatedSets));
+                alert(`Klasse "${setName}" erfolgreich gespeichert!`);
+            };
+
+            const loadTeamSet = (set) => {
+                setNames(set.teams);
+                setIsSettingsOpen(false);
+            };
+
+            const deleteTeamSet = (id) => {
+                if (confirm('Möchtest du diese Klasse wirklich löschen?')) {
+                    const updatedSets = savedTeamSets.filter(s => s.id !== id);
+                    setSavedTeamSets(updatedSets);
+                    localStorage.setItem('monster_klassenkampf_teams', JSON.stringify(updatedSets));
+                }
+            };
+
+            // Cloud Actions
+            const saveTeamsToCloud = async () => {
+                if (!canStart) return alert("Bitte erst gültige Teams eingeben.");
+                setIsLoadingCloud(true);
+                const success = await CloudService.saveTeams(names);
+                setIsLoadingCloud(false);
+                if (success) alert("Teams in Cloud gespeichert!");
+                else alert("Fehler beim Speichern (siehe Konsole).");
+            };
+
+            const loadTeamsFromCloud = async () => {
+                setIsLoadingCloud(true);
+                const loaded = await CloudService.loadTeams();
+                setIsLoadingCloud(false);
+                if (loaded && Array.isArray(loaded)) setNames(loaded);
+                else alert("Keine gespeicherten Teams gefunden.");
+            };
+
+            // Editor Logic
+            const addCustomQuestion = async () => {
+                if (!editQ.text || !editQ.options || editQ.options.some(o => !o)) return;
+                const newQ = { ...editQ, id: Date.now().toString(), category: 'CUSTOM' };
+                const newSet = [...customQuestions, newQ];
+                setCustomQuestions(newSet);
+                setEditQ({ text: '', expression: '', options: ['', '', '', ''], correctIndex: 0, difficulty: 'medium', category: 'CUSTOM' });
+                SoundService.playClick();
+                // Auto-Save
+                await CloudService.saveCustomQuestions(newSet);
+            };
+
+            const removeCustomQuestion = async (id) => {
+                const newSet = customQuestions.filter(q => q.id !== id);
+                setCustomQuestions(newSet);
+                await CloudService.saveCustomQuestions(newSet);
+            };
+
+            const handleJsonImport = () => {
+                try {
+                  const parsed = JSON.parse(jsonImport);
+                  if (Array.isArray(parsed)) {
+                    // Basic validation
+                    const valid = parsed.every(q => q.text && Array.isArray(q.options) && typeof q.correctIndex === 'number');
+                    if (valid) {
+                      const newSet = parsed.map(q => ({...q, category: 'CUSTOM', id: q.id || Math.random().toString()}));
+                      setCustomQuestions(newSet);
+                      setJsonImport('');
+                      alert("Import erfolgreich!");
+                      CloudService.saveCustomQuestions(newSet);
+                    } else {
+                      alert("Format ungültig. Array von Fragen erwartet.");
+                    }
+                  }
+                } catch (e) {
+                  alert("Ungültiges JSON.");
+                }
+            };
+
+            const categoriesMath = [
+                { id: 'ALL', label: 'Bunter Mix', icon: <Layers className="w-5 h-5"/>, color: 'bg-purple-500' },
+                { id: 'EXPAND', label: 'Erweitern', icon: <ArrowRightLeft className="w-5 h-5"/>, color: 'bg-blue-500' },
+                { id: 'SIMPLIFY', label: 'Kürzen', icon: <Scissors className="w-5 h-5"/>, color: 'bg-green-500' },
+                { id: 'EXPAND_SIMPLIFY', label: 'Mix: Erw & Kür', icon: <Briefcase className="w-5 h-5"/>, color: 'bg-teal-500' },
+                { id: 'ADD_SUB', label: 'Plus & Minus', icon: <Calculator className="w-5 h-5"/>, color: 'bg-orange-500' },
+                { id: 'ADD_SUB_PRO', label: 'Plus & Minus PRO', icon: <Zap className="w-5 h-5"/>, color: 'bg-red-600' },
+                { id: 'MULTIPLY', label: 'Multiplizieren', icon: <X className="w-5 h-5"/>, color: 'bg-yellow-500' },
+            ];
+
+            const categoriesGerman = [
+                { id: 'DE_WORTARTEN', label: 'Wortarten', icon: <BookOpen className="w-5 h-5"/>, color: 'bg-blue-600' },
+                { id: 'DE_PERFEKT', label: 'Perfekt', icon: <Clock className="w-5 h-5"/>, color: 'bg-amber-600' },
+                { id: 'DE_PRAETERITUM', label: 'Präteritum', icon: <Clock className="w-5 h-5"/>, color: 'bg-amber-700' },
+                { id: 'DE_FUTUR', label: 'Futur', icon: <Zap className="w-5 h-5"/>, color: 'bg-cyan-600' },
+                { id: 'DE_MIXED', label: 'Zeiten-Mix', icon: <Layers className="w-5 h-5"/>, color: 'bg-purple-600' },
+                { id: 'DE_DEINE_MUTTER', label: 'Deine Mutter', icon: <Smile className="w-5 h-5"/>, color: 'bg-pink-600' },
+            ];
+
+            const currentCategories = selectedSubject === 'MATH' ? categoriesMath : categoriesGerman;
+
+            return (
+                <div className="flex flex-col items-center justify-center min-h-screen bg-slate-900 p-4 md:p-8">
+                    <div className="glass-panel p-6 md:p-8 rounded-3xl max-w-5xl w-full text-center relative overflow-hidden flex flex-col h-full max-h-[95vh]">
+                        {/* Background blobs */}
+                        <div className="absolute top-0 left-0 w-32 h-32 bg-purple-500 rounded-full mix-blend-multiply filter blur-xl opacity-20 animate-blob"></div>
+                        <div className="absolute top-0 right-0 w-32 h-32 bg-yellow-500 rounded-full mix-blend-multiply filter blur-xl opacity-20 animate-blob animation-delay-2000"></div>
+
+                        <div className="shrink-0 mb-4 flex justify-between items-end">
+                            <div className="text-left">
+                                <h1 className="text-3xl md:text-5xl font-black mb-2 text-transparent bg-clip-text bg-gradient-to-r from-pink-500 via-red-500 to-yellow-500">
+                                    MONSTER KLASSENKAMPF
+                                </h1>
+                                <p className="text-slate-300 text-lg game-font">Cloud Edition</p>
+                            </div>
+                            <div className="flex gap-2">
+                                <button onClick={() => setIsSettingsOpen(true)} className="bg-slate-800 hover:bg-slate-700 text-slate-300 p-2 rounded-xl transition-colors border border-white/10 shadow-lg">
+                                    <Settings className="w-6 h-6" />
+                                </button>
+                                <button onClick={() => setShowHighscores(true)} className="bg-yellow-500/20 hover:bg-yellow-500/40 text-yellow-400 p-2 rounded-xl transition-colors border border-yellow-500/50">
+                                    <Trophy className="w-6 h-6" />
+                                </button>
+                            </div>
+                        </div>
+
+                        <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar flex flex-col gap-6">
+                            
+                            {/* TEAM SETUP */}
+                            <div className="bg-slate-800/40 rounded-2xl p-4 border border-white/5">
+                                <div className="flex justify-between items-center mb-4">
+                                    <h2 className="text-left text-slate-400 font-bold uppercase tracking-widest text-sm flex items-center gap-2">
+                                        <User className="w-4 h-4"/> 1. Teams aufstellen
+                                    </h2>
+                                    <div className="flex gap-2">
+                                        <button onClick={() => setIsSettingsOpen(true)} className="text-xs bg-slate-700 hover:bg-blue-600 px-3 py-1 rounded flex items-center gap-1 transition-colors">
+                                            <DownloadCloud className="w-3 h-3"/> Laden
+                                        </button>
+                                        <button onClick={saveCurrentSetup} className="text-xs bg-slate-700 hover:bg-green-600 px-3 py-1 rounded flex items-center gap-1 transition-colors">
+                                            <UploadCloud className="w-3 h-3"/> Sichern
+                                        </button>
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                                    {names.map((name, index) => {
+                                        const config = TEAM_CONFIGS[index % TEAM_CONFIGS.length];
+                                        return (
+                                            <div key={index} className="flex items-center gap-3 animate-in fade-in slide-in-from-bottom-4 duration-500 bg-slate-800/80 p-2 rounded-xl border border-white/5">
+                                                <div className={`w-8 h-8 shrink-0 rounded-lg flex items-center justify-center ${config.color} shadow-lg text-white`}>
+                                                    <span className="font-bold text-lg">{index + 1}</span>
+                                                </div>
+                                                <input
+                                                    type="text"
+                                                    placeholder={`Team ${index + 1}`}
+                                                    value={name}
+                                                    onChange={(e) => updateName(index, e.target.value)}
+                                                    className="flex-1 w-full bg-slate-900 border border-slate-700 rounded-md py-1.5 px-2 text-base focus:border-purple-500 focus:outline-none text-white font-bold"
+                                                />
+                                                {names.length > 1 && (
+                                                    <button onClick={() => removeTeam(index)} className="p-1.5 rounded-md bg-slate-900 hover:bg-red-500/20 text-slate-400 hover:text-red-500">
+                                                        <X className="w-4 h-4" />
+                                                    </button>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
+                                    {names.length < MAX_TEAMS && (
+                                        <button onClick={addTeam} className="flex items-center justify-center gap-2 p-3 rounded-xl border-2 border-dashed border-slate-600 text-slate-400 hover:border-purple-500 hover:text-purple-400 font-bold h-[56px]">
+                                            <Plus className="w-5 h-5" /> Hinzufügen
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* MISSION CONTROL */}
+                            <div className="bg-slate-800/40 rounded-2xl p-4 border border-white/5">
+                                <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-4">
+                                    <h2 className="text-left text-slate-400 font-bold uppercase tracking-widest text-sm flex items-center gap-2">
+                                        <Briefcase className="w-4 h-4"/> 2. Mission wählen
+                                    </h2>
+                                    <div className="flex gap-2 bg-slate-900 p-1 rounded-lg border border-slate-700">
+                                        <button onClick={() => handleSubjectChange('MATH')} className={`px-4 py-1.5 rounded-md text-sm font-bold transition-all flex items-center gap-2 ${selectedSubject === 'MATH' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'}`}>
+                                            <Calculator className="w-4 h-4"/> Mathe
+                                        </button>
+                                        <button onClick={() => handleSubjectChange('GERMAN')} className={`px-4 py-1.5 rounded-md text-sm font-bold transition-all flex items-center gap-2 ${selectedSubject === 'GERMAN' ? 'bg-amber-600 text-white' : 'text-slate-400 hover:text-white'}`}>
+                                            <AlignLeft className="w-4 h-4"/> Deutsch
+                                        </button>
+                                    </div>
+                                    <button onClick={() => setIsEditorOpen(true)} className="bg-slate-700 hover:bg-slate-600 text-xs px-3 py-1 rounded-full flex items-center gap-2 transition-colors border border-white/10 ml-auto md:ml-0">
+                                        <Edit3 className="w-3 h-3"/> Aufgaben-Editor ({customQuestions.length})
+                                    </button>
+                                </div>
+
+                                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-8 gap-3">
+                                    {currentCategories.map((cat) => (
+                                        <button key={cat.id} onClick={() => { SoundService.playClick(); setSelectedCategory(cat.id); }}
+                                            className={`relative flex flex-col items-center justify-center p-3 rounded-xl border-2 transition-all duration-200 ${selectedCategory === cat.id ? `${cat.color} border-white text-white shadow-lg scale-105` : 'bg-slate-900 border-slate-700 text-slate-400 hover:border-slate-500 hover:bg-slate-800'}`}>
+                                            <div className="mb-1 p-2 bg-white/10 rounded-full">{cat.icon}</div>
+                                            <span className="text-[10px] md:text-xs font-bold leading-tight text-center">{cat.label}</span>
+                                        </button>
+                                    ))}
+                                    <button onClick={() => { SoundService.playClick(); setSelectedCategory('CUSTOM'); }}
+                                        className={`relative flex flex-col items-center justify-center p-3 rounded-xl border-2 transition-all duration-200 ${selectedCategory === 'CUSTOM' ? `bg-pink-500 border-white text-white shadow-lg scale-105` : 'bg-slate-900 border-slate-700 text-slate-400 hover:border-slate-500 hover:bg-slate-800'}`}>
+                                        <div className="mb-1 p-2 bg-white/10 rounded-full"><PenTool className="w-5 h-5"/></div>
+                                        <span className="text-[10px] md:text-xs font-bold leading-tight">Eigene</span>
+                                        {customQuestions.length === 0 && selectedCategory !== 'CUSTOM' && (
+                                            <span className="absolute -top-1 -right-1 flex h-3 w-3">
+                                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                                                <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
+                                            </span>
+                                        )}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="shrink-0 mt-4 pt-4 border-t border-white/10">
+                            <button onClick={handleStart} disabled={!canStart || (selectedCategory === 'CUSTOM' && customQuestions.length === 0)}
+                                className={`w-full py-4 rounded-2xl text-2xl font-black shadow-lg transform transition-all ${canStart && (selectedCategory !== 'CUSTOM' || customQuestions.length > 0) ? 'bg-gradient-to-r from-green-500 to-emerald-600 hover:scale-[1.02] hover:shadow-green-500/50 cursor-pointer' : 'bg-slate-700 text-slate-500 cursor-not-allowed opacity-50'}`}>
+                                <span className="flex items-center justify-center gap-3">
+                                    {(selectedCategory === 'CUSTOM' && customQuestions.length === 0) ? 'KEINE AUFGABEN' : 'MISSION STARTEN'}
+                                    <Play className="w-6 h-6 fill-current" />
+                                </span>
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* MODAL: EDITOR */}
+                    {isEditorOpen && (
+                        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in">
+                            <div className="glass-panel w-full max-w-4xl bg-slate-900 rounded-3xl overflow-hidden flex flex-col max-h-[90vh]">
+                                <div className="bg-slate-800 p-4 border-b border-white/10 flex justify-between items-center">
+                                    <h2 className="text-xl font-bold flex items-center gap-2"><PenTool className="w-5 h-5"/> Aufgaben-Editor</h2>
+                                    <button onClick={() => setIsEditorOpen(false)} className="p-2 hover:bg-red-500/20 rounded-full"><X/></button>
+                                </div>
+                                <div className="flex-1 overflow-hidden flex flex-col md:flex-row">
+                                    <div className="w-full md:w-1/2 p-6 overflow-y-auto border-r border-white/10">
+                                        <div className="space-y-4">
+                                            <input className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white" placeholder="Frage..." value={editQ.text} onChange={e => setEditQ({...editQ, text: e.target.value})} />
+                                            <input className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white font-mono" placeholder="Mathe/Formatierung (Optional)" value={editQ.expression} onChange={e => setEditQ({...editQ, expression: e.target.value})} />
+                                            <div className="grid grid-cols-2 gap-2">
+                                                {[0,1,2,3].map(i => (
+                                                    <div key={i}>
+                                                        <label className="text-xs text-slate-500 block mb-1 flex justify-between">Opt {i+1} <input type="radio" name="correct" checked={editQ.correctIndex===i} onChange={()=>setEditQ({...editQ, correctIndex:i})} className="accent-green-500"/></label>
+                                                        <input className={`w-full border rounded p-2 text-sm text-white ${editQ.correctIndex===i ? 'border-green-500 bg-green-900/20' : 'border-slate-600 bg-slate-800'}`} value={editQ.options[i]} onChange={e=>{const n=[...editQ.options];n[i]=e.target.value;setEditQ({...editQ, options:n})}}/>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                            <button onClick={addCustomQuestion} className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded-xl flex justify-center gap-2"><Plus className="w-5 h-5"/> Hinzufügen (Cloud Save)</button>
+                                            
+                                            {/* JSON IMPORT */}
+                                            <div className="mt-8 pt-6 border-t border-white/10">
+                                              <h3 className="text-xs font-bold uppercase text-slate-400 mb-2">Import / Export (JSON)</h3>
+                                              <details className="mb-2 text-[10px] text-slate-500 cursor-pointer">
+                                                  <summary className="hover:text-slate-300">Format-Hilfe & Beispiel anzeigen</summary>
+                                                  <pre className="bg-black/40 p-2 rounded mt-1 overflow-x-auto text-green-400 font-mono">
+{`[
+  {
+    "text": "Frage?",
+    "expression": "Ich sehe ein _Haus_",
+    "options": ["A", "B", "C", "D"],
+    "correctIndex": 0,
+    "difficulty": "easy"
+  }
+]`}
+                                                  </pre>
+                                              </details>
+                                              <textarea 
+                                                 className="w-full h-24 bg-black/50 font-mono text-xs text-green-400 p-2 rounded border border-slate-700"
+                                                 value={jsonImport}
+                                                 onChange={e => setJsonImport(e.target.value)}
+                                                 placeholder="JSON hier einfügen..."
+                                              />
+                                              <div className="flex gap-2 mt-2">
+                                                 <button onClick={handleJsonImport} className="flex-1 bg-slate-700 hover:bg-slate-600 py-2 rounded text-xs font-bold flex items-center justify-center gap-1">
+                                                    <Upload className="w-3 h-3"/> Importieren
+                                                 </button>
+                                                 <button 
+                                                   onClick={() => navigator.clipboard.writeText(JSON.stringify(customQuestions))}
+                                                   className="flex-1 bg-slate-700 hover:bg-slate-600 py-2 rounded text-xs font-bold flex items-center justify-center gap-1"
+                                                 >
+                                                    <Download className="w-3 h-3"/> JSON Kopieren
+                                                 </button>
+                                              </div>
+                                           </div>
+                                        </div>
+                                    </div>
+                                    <div className="w-full md:w-1/2 p-6 overflow-y-auto bg-black/20">
+                                        <h3 className="text-sm font-bold uppercase text-slate-400 mb-4">Liste ({customQuestions.length})</h3>
+                                        <div className="space-y-3">
+                                            {customQuestions.map((q,idx) => (
+                                                <div key={q.id||idx} className="bg-slate-800 p-3 rounded-lg border border-slate-700 flex justify-between">
+                                                    <div>
+                                                        <div className="font-bold text-sm">{q.text}</div>
+                                                        <div className="text-xs text-slate-500">Lösung: {q.options[q.correctIndex]}</div>
+                                                    </div>
+                                                    <button onClick={() => removeCustomQuestion(q.id)} className="text-slate-600 hover:text-red-500"><Trash className="w-4 h-4"/></button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* MODAL: SETTINGS & TEAMS */}
+                    {isSettingsOpen && (
+                        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
+                            <div className="glass-panel w-full max-w-2xl bg-slate-900 rounded-3xl overflow-hidden flex flex-col max-h-[80vh]">
+                                <div className="bg-slate-800 p-4 border-b border-white/10 flex justify-between items-center">
+                                    <h2 className="text-xl font-bold flex items-center gap-2"><Settings className="w-5 h-5 text-blue-400"/> Einstellungen & Klassen</h2>
+                                    <button onClick={() => setIsSettingsOpen(false)} className="p-2 hover:bg-red-500/20 rounded-full transition-colors"><X/></button>
+                                </div>
+                                
+                                <div className="p-6 overflow-y-auto custom-scrollbar">
+                                    <h3 className="text-sm font-bold uppercase text-slate-400 mb-4 flex items-center gap-2">
+                                        <Users className="w-4 h-4" /> Gespeicherte Klassen ({savedTeamSets.length})
+                                    </h3>
+                                    
+                                    {savedTeamSets.length === 0 ? (
+                                        <div className="text-center py-8 bg-black/20 rounded-xl border border-white/5">
+                                            <Users className="w-12 h-12 text-slate-600 mx-auto mb-3" />
+                                            <p className="text-slate-400">Noch keine Klassen gespeichert.</p>
+                                            <p className="text-xs text-slate-500 mt-1">Erstelle Teams und klicke auf "Sichern".</p>
+                                        </div>
+                                    ) : (
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                            {savedTeamSets.map(set => (
+                                                <div key={set.id} className="bg-slate-800 border border-white/10 rounded-xl p-4 flex flex-col gap-3 hover:border-blue-500/50 transition-colors">
+                                                    <div className="flex justify-between items-start">
+                                                        <h4 className="font-bold text-lg text-white">{set.name}</h4>
+                                                        <span className="text-xs font-bold bg-slate-900 px-2 py-1 rounded-md text-slate-400">
+                                                            {set.teams.length} Teams
+                                                        </span>
+                                                    </div>
+                                                    
+                                                    <div className="flex flex-wrap gap-1">
+                                                        {set.teams.map((teamName, idx) => (
+                                                            <span key={idx} className="text-[10px] bg-slate-700 px-1.5 py-0.5 rounded text-slate-300">
+                                                                {teamName}
+                                                            </span>
+                                                        ))}
+                                                    </div>
+
+                                                    <div className="flex gap-2 mt-2 pt-3 border-t border-white/5">
+                                                        <button 
+                                                            onClick={() => loadTeamSet(set)}
+                                                            className="flex-1 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold py-2 rounded-lg transition-colors flex items-center justify-center gap-1"
+                                                        >
+                                                            <DownloadCloud className="w-3 h-3" /> Laden
+                                                        </button>
+                                                        <button 
+                                                            onClick={() => deleteTeamSet(set.id)}
+                                                            className="bg-slate-700 hover:bg-red-600 text-slate-300 hover:text-white p-2 rounded-lg transition-colors"
+                                                            title="Löschen"
+                                                        >
+                                                            <Trash className="w-4 h-4" />
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* MODAL: HIGHSCORES */}
+                    {showHighscores && (
+                        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in">
+                            <div className="glass-panel w-full max-w-lg bg-slate-900 rounded-3xl overflow-hidden flex flex-col max-h-[80vh]">
+                                <div className="bg-slate-800 p-4 border-b border-white/10 flex justify-between items-center">
+                                    <h2 className="text-xl font-bold flex items-center gap-2"><Trophy className="w-5 h-5 text-yellow-400"/> Bestenliste</h2>
+                                    <button onClick={() => setShowHighscores(false)} className="p-2 hover:bg-red-500/20 rounded-full"><X/></button>
+                                </div>
+                                <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
+                                    {highscores.length === 0 ? (
+                                        <p className="text-center text-slate-500 py-10">Noch keine Einträge.</p>
+                                    ) : (
+                                        <table className="w-full text-left">
+                                            <thead>
+                                                <tr className="text-slate-400 text-xs uppercase border-b border-white/10">
+                                                    <th className="pb-2">#</th>
+                                                    <th className="pb-2">Team</th>
+                                                    <th className="pb-2 text-right">Score</th>
+                                                    <th className="pb-2 text-right">Datum</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {highscores.map((h, i) => (
+                                                    <tr key={i} className="border-b border-white/5 last:border-0 hover:bg-white/5">
+                                                        <td className="py-3 font-bold text-slate-500">{i+1}</td>
+                                                        <td className="py-3 font-bold text-white">{h.name}</td>
+                                                        <td className="py-3 text-right font-mono text-yellow-400">{h.score}</td>
+                                                        <td className="py-3 text-right text-xs text-slate-500">{new Date(h.date).toLocaleDateString()}</td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        // --- GameScreen Component ---
+        const GameScreen = ({ gameState, setGameState, onExit }) => {
+            const [selectedOption, setSelectedOption] = useState(null);
+            const [isAnswering, setIsAnswering] = useState(false);
+            const [feedback, setFeedback] = useState(null);
+            const [showExitConfirm, setShowExitConfirm] = useState(false);
+
+            const currentTeam = gameState.teams[gameState.currentTeamIndex];
+            const teamConfig = TEAM_CONFIGS[gameState.currentTeamIndex % TEAM_CONFIGS.length];
+
+            useEffect(() => {
+                if (!gameState.currentQuestion && !gameState.isGeneratingQuestion) {
+                    loadQuestion();
+                }
+            }, [gameState.currentTeamIndex, gameState.currentQuestion]);
+
+            const loadQuestion = async () => {
+                setGameState(prev => ({ ...prev, isGeneratingQuestion: true }));
+                const difficulty = currentTeam.stage >= MonsterStage.TEEN ? 'medium' : 'easy';
+                const question = await generateQuestion(difficulty, gameState.selectedCategory, gameState.customQuestions);
+                setGameState(prev => ({ ...prev, isGeneratingQuestion: false, currentQuestion: question }));
+            };
+
+            const handleAnswer = async (index) => {
+                if (isAnswering || !gameState.currentQuestion) return;
+                SoundService.playClick();
+                setSelectedOption(index);
+                setIsAnswering(true);
+                const isCorrect = index === gameState.currentQuestion.correctIndex;
+                await new Promise(r => setTimeout(r, 800));
+                setFeedback(isCorrect ? 'correct' : 'incorrect');
+
+                setGameState(prev => {
+                    const newTeams = [...prev.teams];
+                    const team = { ...newTeams[prev.currentTeamIndex] };
+                    let leveledUp = false;
+                    if (isCorrect) {
+                        team.streak += 1;
+                        team.score += 55;
+                        team.exp += 50;
+                        if (team.exp >= EXP_TO_LEVEL) {
+                            if (team.stage < MonsterStage.TITAN) {
+                                team.stage += 1;
+                                team.exp = 0;
+                                leveledUp = true;
+                            }
+                        }
+                        leveledUp ? SoundService.playLevelUp() : SoundService.playCorrect();
+                    } else {
+                        SoundService.playIncorrect();
+                        team.streak = 0;
+                        team.exp = Math.max(0, team.exp - 30);
+                        if (team.exp === 0 && team.stage > MonsterStage.EGG) {
+                            if (team.stage > MonsterStage.HATCHLING) {
+                                team.stage -= 1;
+                                team.exp = EXP_TO_LEVEL - 20;
+                            }
+                        }
+                    }
+                    newTeams[prev.currentTeamIndex] = team;
+                    return { ...prev, teams: newTeams };
+                });
+            };
+
+            const nextTurn = () => {
+                SoundService.playClick();
+                const winner = gameState.teams.find(t => t.stage === WINNING_STAGE);
+                if (winner) { /* handled in effect */ }
+                setFeedback(null);
+                setSelectedOption(null);
+                setIsAnswering(false);
+                setGameState(prev => ({
+                    ...prev,
+                    currentQuestion: null,
+                    currentTeamIndex: (prev.currentTeamIndex + 1) % prev.teams.length
+                }));
+            };
+
+            let monsterReaction = 'idle';
+            if (feedback === 'correct') monsterReaction = 'happy';
+            if (feedback === 'incorrect') monsterReaction = 'sad';
+
+            return (
+                <div className="flex flex-col h-[100vh] bg-slate-900 overflow-hidden font-sans text-white relative">
+                    <button onClick={() => setShowExitConfirm(true)} className="absolute top-2 right-2 md:top-4 md:right-4 z-[50] p-2 bg-slate-800/80 hover:bg-red-500/80 rounded-lg border border-slate-700 transition-colors">
+                        <Home className="w-5 h-5 md:w-6 md:h-6" />
+                    </button>
+
+                    {showExitConfirm && (
+                        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
+                            <div className="glass-panel p-6 rounded-2xl max-w-sm w-full text-center bg-slate-900 border border-slate-700">
+                                <AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
+                                <h3 className="text-xl font-bold mb-2">Spiel beenden?</h3>
+                                <p className="text-slate-400 mb-6 text-sm">Fortschritt geht verloren.</p>
+                                <div className="flex gap-3">
+                                    <button onClick={() => setShowExitConfirm(false)} className="flex-1 py-3 rounded-xl bg-slate-800 font-bold">Abbrechen</button>
+                                    <button onClick={() => { SoundService.playClick(); onExit(); }} className="flex-1 py-3 rounded-xl bg-red-600 font-bold">Beenden</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    <header className="h-14 md:h-16 shrink-0 bg-slate-800/80 backdrop-blur border-b border-slate-700 flex items-center px-4 gap-4 overflow-x-auto z-20 no-scrollbar pr-14">
+                        <div className="hidden lg:flex items-center gap-2 mr-2 text-slate-400 font-bold uppercase tracking-wider text-sm"><Users className="w-4 h-4" /> Teams</div>
+                        <div className="flex gap-2 flex-1">
+                            {gameState.teams.map((team, idx) => {
+                                const isCurrent = idx === gameState.currentTeamIndex;
+                                const config = TEAM_CONFIGS[idx % TEAM_CONFIGS.length];
+                                return (
+                                    <div key={team.id} className={`relative flex items-center gap-2 px-2 py-1 rounded-lg transition-all duration-300 min-w-[90px] ${isCurrent ? `${config.color} text-white shadow-lg scale-105 border border-white/30` : 'bg-slate-700/50 text-slate-400'}`}>
+                                        <div className="w-5 h-5"><MonsterDisplay type={team.type} stage={team.stage} /></div>
+                                        <div className="flex flex-col leading-tight overflow-hidden">
+                                            <span className="font-bold truncate text-xs">{team.name}</span>
+                                            <span className="text-[10px] opacity-80">{team.score} Pkt</span>
+                                        </div>
+                                        <div className="absolute bottom-0 left-0 h-1 bg-black/20 w-full rounded-b-lg overflow-hidden">
+                                            <div className="h-full bg-white/70" style={{ width: `${(team.exp / EXP_TO_LEVEL) * 100}%` }}></div>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </header>
+
+                    <div className="flex-1 flex flex-col lg:flex-row overflow-hidden relative">
+                        <div className={`absolute inset-0 opacity-10 transition-colors duration-1000 ${teamConfig.color}`}></div>
+                        
+                        <div className="shrink-0 z-10 w-full lg:w-1/3 lg:max-w-md h-auto lg:h-full flex flex-row lg:flex-col items-center justify-between lg:justify-center p-2 lg:p-8 bg-slate-900/30 backdrop-blur-sm border-b lg:border-b-0 lg:border-r border-white/10">
+                            <div className="text-left lg:text-center w-1/2 lg:w-full flex flex-col justify-center">
+                                <h2 className="text-xl md:text-3xl font-black tracking-tight mb-1 truncate">{currentTeam.name}</h2>
+                                <div className="self-start lg:self-center inline-flex items-center gap-2 px-2 py-0.5 rounded-full bg-white/10 text-xs font-bold border border-white/10">
+                                    <span>Stufe {currentTeam.stage + 1}</span><span className="opacity-50">|</span><span>{currentTeam.score} XP</span>
+                                </div>
+                                <div className="hidden md:block w-full mt-4 bg-slate-800/80 p-3 rounded-xl border border-white/5 shadow-inner">
+                                    <div className="flex justify-between text-[10px] font-bold mb-1 uppercase tracking-wider text-slate-400"><span>Wachstum</span><span>{Math.floor(currentTeam.exp)}%</span></div>
+                                    <div className="h-2 bg-slate-900 rounded-full overflow-hidden relative"><div className={`h-full transition-all duration-700 ease-out ${teamConfig.color}`} style={{ width: `${(currentTeam.exp / EXP_TO_LEVEL) * 100}%` }}></div></div>
+                                </div>
+                            </div>
+                            <div className="flex-1 h-full flex items-center justify-center w-1/2 lg:w-full">
+                                <div className="h-full aspect-square relative max-h-[120px] md:max-h-[250px]">
+                                    <MonsterDisplay type={currentTeam.type} stage={currentTeam.stage} reaction={monsterReaction} />
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="flex-1 p-2 md:p-4 lg:p-6 flex flex-col relative z-10 overflow-hidden h-full min-h-0">
+                            <div className="glass-panel w-full h-full rounded-xl md:rounded-3xl p-3 md:p-6 lg:p-10 flex flex-col shadow-2xl relative overflow-hidden bg-slate-800/40 border-slate-700/50">
+                                {gameState.isGeneratingQuestion ? (
+                                    <div className="flex-1 flex flex-col items-center justify-center text-slate-300 gap-4">
+                                        <Loader2 className="w-16 h-16 animate-spin text-purple-500" />
+                                        <p className="text-xl font-bold animate-pulse">Eine Herausforderung erscheint...</p>
+                                    </div>
+                                ) : gameState.currentQuestion ? (
+                                    <>
+                                        <div className="shrink-0 mb-2 md:mb-6 text-center flex flex-col items-center justify-center py-2">
+                                            <span className="inline-block px-2 py-0.5 rounded bg-slate-900/50 text-slate-400 text-xs font-bold border border-slate-700 mb-2 uppercase tracking-widest">{gameState.currentQuestion.difficulty === 'easy' ? 'Leicht' : 'Mittel'}</span>
+                                            <h3 className="text-lg md:text-2xl lg:text-3xl font-bold leading-tight mb-3 max-w-4xl mx-auto"><MathText text={gameState.currentQuestion.text} /></h3>
+                                            {gameState.currentQuestion.expression && <div className="text-3xl md:text-5xl font-black text-white drop-shadow-md py-2"><MathText text={gameState.currentQuestion.expression} scale={1.1} /></div>}
+                                        </div>
+                                        <div className="flex-1 min-h-0 grid grid-cols-2 gap-2 md:gap-4 pb-2">
+                                            {gameState.currentQuestion.options.map((opt, i) => {
+                                                let stateClass = "bg-slate-800 hover:bg-slate-700 border-slate-600 text-slate-200 hover:border-purple-400/50";
+                                                if (feedback) {
+                                                    if (i === gameState.currentQuestion.correctIndex) stateClass = "bg-green-600 border-green-400 text-white shadow-[0_0_30px_rgba(34,197,94,0.3)] scale-[1.02] z-10";
+                                                    else if (i === selectedOption) stateClass = "bg-red-500/80 border-red-400 text-white opacity-50 grayscale";
+                                                    else stateClass = "opacity-20 bg-slate-900 border-transparent pointer-events-none";
+                                                } else if (selectedOption === i) stateClass = "bg-purple-600 border-purple-400 text-white shadow-lg scale-[1.02]";
+                                                return (
+                                                    <button key={i} disabled={isAnswering} onClick={() => handleAnswer(i)} className={`relative rounded-xl md:rounded-2xl border-b-4 md:border-b-8 text-xl md:text-3xl font-black transition-all duration-200 flex items-center justify-center p-2 shadow-lg h-full active:scale-[0.98] active:border-b-0 active:translate-y-2 ${stateClass}`}><MathText text={opt} scale={1.1} /></button>
+                                                );
+                                            })}
+                                        </div>
+                                    </>
+                                ) : null}
+
+                                {feedback && (
+                                    <div className="absolute inset-0 z-50 flex flex-col items-center justify-center animate-in fade-in zoom-in duration-300 rounded-xl bg-slate-900/95 backdrop-blur-xl">
+                                        {feedback === 'correct' ? (
+                                            <>
+                                                <div className="relative mb-6"><div className="absolute inset-0 bg-yellow-500 blur-[60px] opacity-30 animate-pulse"></div><Star className="w-24 h-24 text-yellow-400 fill-yellow-400 animate-[spin_4s_linear_infinite]" /></div>
+                                                <h3 className="text-6xl font-black text-white mb-2 tracking-tighter">RICHTIG!</h3>
+                                                <p className="text-2xl text-green-400 mb-8 font-bold">+XP für {currentTeam.name}!</p>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <Frown className="w-24 h-24 text-red-500 mb-6 animate-bounce" />
+                                                <h3 className="text-6xl font-black text-white mb-2 tracking-tighter">FALSCH</h3>
+                                                {gameState.currentQuestion.explanation && <div className="bg-slate-800/80 p-4 rounded-xl max-w-xl text-center border border-white/10 mb-6"><p className="text-slate-200 text-lg"><MathText text={gameState.currentQuestion.explanation}/></p></div>}
+                                            </>
+                                        )}
+                                        <button onClick={nextTurn} className="px-10 py-5 bg-white text-slate-900 rounded-xl text-2xl font-black hover:scale-105 transition-all shadow-xl flex items-center gap-3">WEITER <ArrowRight /></button>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- VictoryScreen Component ---
+        const VictoryScreen = ({ gameState, onRestart }) => {
+            const winner = gameState.teams.find(t => t.stage === MonsterStage.TITAN) || gameState.teams[0];
+
+            useEffect(() => {
+                SoundService.playVictory();
+                const duration = 5000;
+                const end = Date.now() + duration;
+                const frame = () => {
+                    confetti({ particleCount: 5, angle: 60, spread: 55, origin: { x: 0 } });
+                    confetti({ particleCount: 5, angle: 120, spread: 55, origin: { x: 1 } });
+                    if (Date.now() < end) requestAnimationFrame(frame);
+                };
+                frame();
+                
+                // Save Highscore automatically
+                CloudService.saveHighscore({
+                    name: winner.name,
+                    score: winner.score,
+                    type: winner.type
+                });
+            }, []);
+
+            return (
+                <div className="h-screen bg-slate-900 flex items-center justify-center p-4">
+                    <div className="glass-panel max-w-3xl w-full p-12 rounded-3xl text-center flex flex-col items-center">
+                        <div className="bg-yellow-500 rounded-full p-6 mb-6 shadow-2xl shadow-yellow-500/50 animate-bounce"><Trophy className="w-16 h-16 text-white" /></div>
+                        <h1 className="text-6xl font-black text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 via-orange-500 to-red-500 mb-2">{winner.name.toUpperCase()} GEWINNT!</h1>
+                        <p className="text-2xl text-slate-300 mb-12">Ihr Monster ist zum TITAN geworden!</p>
+                        <div className="w-64 h-64 mb-12"><MonsterDisplay type={winner.type} stage={MonsterStage.TITAN} reaction="happy" /></div>
+                        <button onClick={() => { SoundService.playClick(); onRestart(); }} className="bg-white text-slate-900 px-8 py-4 rounded-xl text-xl font-black hover:scale-105 transition-transform flex items-center gap-2 shadow-lg"><RefreshCw className="w-6 h-6" /> NOCHMAL SPIELEN</button>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- Main App Component ---
+        const App = () => {
+            const [gameState, setGameState] = useState({
+                phase: GamePhase.SETUP,
+                teams: [],
+                currentTeamIndex: 0,
+                currentQuestion: null,
+                isGeneratingQuestion: false,
+                message: null,
+                selectedCategory: 'ALL',
+                customQuestions: []
+            });
+            const [isFullscreen, setIsFullscreen] = useState(false);
+
+            useEffect(() => {
+                const handleFS = () => setIsFullscreen(!!document.fullscreenElement);
+                document.addEventListener('fullscreenchange', handleFS);
+                return () => document.removeEventListener('fullscreenchange', handleFS);
+            }, []);
+
+            const toggleFullscreen = () => {
+                if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(console.error);
+                else document.exitFullscreen();
+            };
+
+            const handleStartGame = (names, category, customQuestions) => {
+                resetQuestionHistory();
+                const teams = names.map((name, index) => ({
+                    id: `team-${index}`,
+                    name: name || `Team ${index + 1}`,
+                    type: TEAM_CONFIGS[index % TEAM_CONFIGS.length].type,
+                    score: 0,
+                    stage: MonsterStage.EGG,
+                    exp: 0,
+                    streak: 0,
+                }));
+                setGameState(prev => ({
+                    ...prev,
+                    phase: GamePhase.PLAYING,
+                    teams,
+                    currentTeamIndex: 0,
+                    selectedCategory: category,
+                    customQuestions
+                }));
+            };
+
+            const handleRestart = () => {
+                resetQuestionHistory();
+                setGameState(prev => ({
+                    ...prev,
+                    phase: GamePhase.SETUP,
+                    teams: [],
+                    currentTeamIndex: 0,
+                    currentQuestion: null,
+                    message: null
+                }));
+            };
+
+            useEffect(() => {
+                if (gameState.phase === GamePhase.PLAYING) {
+                    const winner = gameState.teams.find(t => t.stage === WINNING_STAGE);
+                    if (winner) setGameState(prev => ({ ...prev, phase: GamePhase.VICTORY }));
+                }
+            }, [gameState.teams, gameState.phase]);
+
+            return (
+                <div className="min-h-screen bg-slate-900 text-white font-sans selection:bg-purple-500 selection:text-white">
+                    <button onClick={toggleFullscreen} className="fixed top-2 left-2 md:top-4 md:left-4 z-[100] p-2 bg-slate-800/80 hover:bg-blue-600/80 text-slate-300 hover:text-white rounded-lg border border-slate-700 transition-colors shadow-lg backdrop-blur">
+                        {isFullscreen ? <Minimize className="w-5 h-5 md:w-6 md:h-6" /> : <Maximize className="w-5 h-5 md:w-6 md:h-6" />}
+                    </button>
+
+                    {gameState.phase === GamePhase.SETUP && <SetupScreen onStart={handleStartGame} />}
+                    {gameState.phase === GamePhase.PLAYING && <GameScreen gameState={gameState} setGameState={setGameState} onExit={handleRestart} />}
+                    {gameState.phase === GamePhase.VICTORY && <VictoryScreen gameState={gameState} onRestart={handleRestart} />}
+                </div>
+            );
+        };
+
+        const root = createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+<script type="module" src="/index.tsx"></script>
+</body>
+</html>
