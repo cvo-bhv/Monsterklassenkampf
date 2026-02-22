@@ -80,6 +80,31 @@
       .animate-blob { animation: blob 7s infinite; }
       .animation-delay-2000 { animation-delay: 2s; }
 
+      /* Erklärmonster Animations */
+      @keyframes crack-top {
+        0% { transform: translateY(0); }
+        20% { transform: translateY(-10px) rotate(-1deg); }
+        100% { transform: translateY(-100%) rotate(-5deg); }
+      }
+      @keyframes crack-bottom {
+        0% { transform: translateY(0); }
+        20% { transform: translateY(10px) rotate(1deg); }
+        100% { transform: translateY(100%) rotate(5deg); }
+      }
+      .animate-crack-top { animation: crack-top 1.2s forwards cubic-bezier(0.25, 1, 0.5, 1); }
+      .animate-crack-bottom { animation: crack-bottom 1.2s forwards cubic-bezier(0.25, 1, 0.5, 1); }
+      
+      @keyframes close-top {
+        0% { transform: translateY(-100%) rotate(-5deg); }
+        100% { transform: translateY(0) rotate(0); }
+      }
+      @keyframes close-bottom {
+        0% { transform: translateY(100%) rotate(5deg); }
+        100% { transform: translateY(0) rotate(0); }
+      }
+      .animate-close-top { animation: close-top 0.8s forwards cubic-bezier(0.25, 1, 0.5, 1); }
+      .animate-close-bottom { animation: close-bottom 0.8s forwards cubic-bezier(0.25, 1, 0.5, 1); }
+
       .custom-scrollbar::-webkit-scrollbar {
         width: 8px;
       }
@@ -140,7 +165,7 @@
             // Die vollständige WebDAV URL zu dem Ordner, in dem die Spiel-Daten liegen sollen.
             // Der Ordner MUSS bereits existieren!
             // Beispiel: "https://cloud.schule.de/remote.php/dav/files/lehrername/BruchMonster/klassenkampf/"
-            url: "https://victorymind.de/nextcloud/remote.php/dav/files/hosting236423/", 
+            url: "https://victorymind.de/nextcloud/remote.php/dav/files/hosting236423/klassenkampf/", 
             
             // Ihr Benutzername
             user: "hosting236423", 
@@ -173,7 +198,7 @@
                     if (response.status === 404 && method === 'GET') {
                         return null; // Datei existiert noch nicht
                     }
-                    throw new Error(`Nextcloud Error: ${response.status} ${response.statusText}`);
+                    throw new Error(`HTTP ${response.status} ${response.statusText}`);
                 }
 
                 if (method === 'GET') {
@@ -182,7 +207,7 @@
                 return true; // Success für PUT/DELETE
             } catch (e) {
                 console.error("NC Sync Error:", e);
-                return null;
+                throw e; // Throw to let UI handle it
             }
         };
 
@@ -195,7 +220,8 @@
             loadCustomQuestions: async () => ncFetch('custom_questions.json', 'GET'),
 
             saveHighscore: async (entry) => {
-                let current = await ncFetch('highscores.json', 'GET') || [];
+                let current = [];
+                try { current = await ncFetch('highscores.json', 'GET') || []; } catch(e) {}
                 // Add new entry
                 current.push({
                     ...entry,
@@ -208,7 +234,9 @@
                 await ncFetch('highscores.json', 'PUT', current);
                 return current;
             },
-            loadHighscores: async () => ncFetch('highscores.json', 'GET') || []
+            loadHighscores: async () => {
+                try { return await ncFetch('highscores.json', 'GET') || []; } catch(e) { return []; }
+            }
         };
 
 
@@ -630,6 +658,24 @@
             const removeTeam = (index) => { SoundService.playClick(); setNames(names.filter((_, i) => i !== index)); };
             const updateName = (index, value) => { const u = [...names]; u[index] = value; setNames(u); };
 
+            const handleKeyDown = (e, index) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    if (index < names.length - 1) {
+                        // Focus next input
+                        const nextInput = document.getElementById(`team-input-${index + 1}`);
+                        if (nextInput) nextInput.focus();
+                    } else if (names.length < MAX_TEAMS) {
+                        // Add new team and focus it
+                        addTeam();
+                        setTimeout(() => {
+                            const nextInput = document.getElementById(`team-input-${index + 1}`);
+                            if (nextInput) nextInput.focus();
+                        }, 50);
+                    }
+                }
+            };
+
             const handleStart = () => {
                 if (canStart) {
                     SoundService.init();
@@ -682,18 +728,29 @@
             const saveTeamsToCloud = async () => {
                 if (!canStart) return alert("Bitte erst gültige Teams eingeben.");
                 setIsLoadingCloud(true);
-                const success = await CloudService.saveTeams(names);
+                try {
+                    await CloudService.saveTeams(names);
+                    alert("Teams erfolgreich in der Nextcloud gespeichert!");
+                } catch (e) {
+                    alert(`Fehler beim Speichern:\n${e.message}\n\nMögliche Ursachen:\n1. Der Ordner 'klassenkampf' existiert nicht in deiner Nextcloud.\n2. CORS blockiert die Anfrage (teste es lokal mit einer CORS-Erweiterung oder lade die HTML-Datei auf deinen Server).`);
+                }
                 setIsLoadingCloud(false);
-                if (success) alert("Teams in Cloud gespeichert!");
-                else alert("Fehler beim Speichern (siehe Konsole).");
             };
 
             const loadTeamsFromCloud = async () => {
                 setIsLoadingCloud(true);
-                const loaded = await CloudService.loadTeams();
+                try {
+                    const loaded = await CloudService.loadTeams();
+                    if (loaded && Array.isArray(loaded)) {
+                        setNames(loaded);
+                        alert("Teams erfolgreich geladen!");
+                    } else {
+                        alert("Keine gespeicherten Teams gefunden.");
+                    }
+                } catch (e) {
+                    alert(`Fehler beim Laden:\n${e.message}\n\nMögliche Ursachen:\n1. CORS blockiert die Anfrage.\n2. Zugangsdaten falsch.`);
+                }
                 setIsLoadingCloud(false);
-                if (loaded && Array.isArray(loaded)) setNames(loaded);
-                else alert("Keine gespeicherten Teams gefunden.");
             };
 
             // Editor Logic
@@ -705,13 +762,13 @@
                 setEditQ({ text: '', expression: '', options: ['', '', '', ''], correctIndex: 0, difficulty: 'medium', category: 'CUSTOM' });
                 SoundService.playClick();
                 // Auto-Save
-                await CloudService.saveCustomQuestions(newSet);
+                try { await CloudService.saveCustomQuestions(newSet); } catch(e) { console.error(e); }
             };
 
             const removeCustomQuestion = async (id) => {
                 const newSet = customQuestions.filter(q => q.id !== id);
                 setCustomQuestions(newSet);
-                await CloudService.saveCustomQuestions(newSet);
+                try { await CloudService.saveCustomQuestions(newSet); } catch(e) { console.error(e); }
             };
 
             const handleJsonImport = () => {
@@ -806,10 +863,12 @@
                                                     <span className="font-bold text-lg">{index + 1}</span>
                                                 </div>
                                                 <input
+                                                    id={`team-input-${index}`}
                                                     type="text"
                                                     placeholder={`Team ${index + 1}`}
                                                     value={name}
                                                     onChange={(e) => updateName(index, e.target.value)}
+                                                    onKeyDown={(e) => handleKeyDown(e, index)}
                                                     className="flex-1 w-full bg-slate-900 border border-slate-700 rounded-md py-1.5 px-2 text-base focus:border-purple-500 focus:outline-none text-white font-bold"
                                                 />
                                                 {names.length > 1 && (
@@ -1064,12 +1123,133 @@
             );
         };
 
+        // --- Whiteboard Component (Erklärmonster) ---
+        const Whiteboard = ({ question, onClose }) => {
+            const canvasRef = useRef(null);
+            const [isDrawing, setIsDrawing] = useState(false);
+            const [isClosing, setIsClosing] = useState(false);
+            const [color, setColor] = useState('#0f172a');
+
+            useEffect(() => {
+                const canvas = canvasRef.current;
+                const ctx = canvas.getContext('2d');
+                const resize = () => {
+                    const temp = ctx.getImageData(0,0,canvas.width, canvas.height);
+                    canvas.width = canvas.offsetWidth;
+                    canvas.height = canvas.offsetHeight;
+                    ctx.putImageData(temp, 0, 0);
+                    ctx.lineCap = 'round';
+                    ctx.lineJoin = 'round';
+                    ctx.lineWidth = 4;
+                };
+                // Initial size
+                canvas.width = canvas.offsetWidth;
+                canvas.height = canvas.offsetHeight;
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+                ctx.lineWidth = 4;
+                
+                window.addEventListener('resize', resize);
+                return () => window.removeEventListener('resize', resize);
+            }, []);
+
+            const startDrawing = (e) => {
+                const canvas = canvasRef.current;
+                const ctx = canvas.getContext('2d');
+                const rect = canvas.getBoundingClientRect();
+                const x = (e.clientX || (e.touches && e.touches[0].clientX)) - rect.left;
+                const y = (e.clientY || (e.touches && e.touches[0].clientY)) - rect.top;
+                ctx.strokeStyle = color;
+                ctx.beginPath();
+                ctx.moveTo(x, y);
+                setIsDrawing(true);
+            };
+
+            const draw = (e) => {
+                if (!isDrawing) return;
+                e.preventDefault();
+                const canvas = canvasRef.current;
+                const ctx = canvas.getContext('2d');
+                const rect = canvas.getBoundingClientRect();
+                const x = (e.clientX || (e.touches && e.touches[0].clientX)) - rect.left;
+                const y = (e.clientY || (e.touches && e.touches[0].clientY)) - rect.top;
+                ctx.lineTo(x, y);
+                ctx.stroke();
+            };
+
+            const stopDrawing = () => {
+                setIsDrawing(false);
+            };
+
+            const handleClose = () => {
+                setIsClosing(true);
+                setTimeout(onClose, 800);
+            };
+
+            return (
+                <div className="fixed inset-0 z-[200] overflow-hidden flex flex-col bg-white">
+                    {/* Eggshell Halves */}
+                    <div className={`absolute inset-x-0 top-0 h-[55vh] bg-slate-900 z-50 pointer-events-none flex items-center justify-center ${isClosing ? 'animate-close-top' : 'animate-crack-top'}`} style={{ clipPath: 'polygon(0 0, 100% 0, 100% 90%, 85% 100%, 70% 85%, 50% 100%, 30% 85%, 15% 100%, 0 90%)' }}>
+                        <div className="text-slate-800 opacity-50 flex flex-col items-center">
+                            <GraduationCap className="w-32 h-32 mb-4" />
+                            <span className="text-4xl font-black tracking-widest">ERKLÄRMONSTER</span>
+                        </div>
+                    </div>
+                    <div className={`absolute inset-x-0 bottom-0 h-[55vh] bg-slate-900 z-50 pointer-events-none ${isClosing ? 'animate-close-bottom' : 'animate-crack-bottom'}`} style={{ clipPath: 'polygon(0 10%, 15% 20%, 30% 5%, 50% 20%, 70% 5%, 85% 20%, 100% 10%, 100% 100%, 0 100%)' }}>
+                    </div>
+
+                    {/* Whiteboard Content */}
+                    <div className="relative z-40 flex flex-col h-full animate-in fade-in duration-1000 delay-300">
+                        <div className="p-4 md:p-6 bg-slate-100 border-b border-slate-300 flex justify-between items-center shadow-sm">
+                            <div>
+                                <h3 className="text-slate-500 font-bold text-sm uppercase tracking-widest flex items-center gap-2"><PenTool className="w-4 h-4"/> Erklärmonster-Board</h3>
+                                <p className="text-xl md:text-2xl font-black text-slate-800 mt-1">{question.text}</p>
+                                {question.expression && <div className="text-lg md:text-xl text-blue-600 font-mono mt-2"><MathText text={question.expression} /></div>}
+                            </div>
+                            <button onClick={handleClose} className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 md:px-6 md:py-3 rounded-2xl font-bold text-base md:text-lg shadow-lg shadow-green-500/30 flex items-center gap-2 transition-transform active:scale-95 shrink-0">
+                                <Check className="w-6 h-6" /> <span className="hidden md:inline">Fertig</span>
+                            </button>
+                        </div>
+                        <div className="flex-1 relative cursor-crosshair bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGNpcmNsZSBjeD0iMiIgY3k9IjIiIHI9IjEiIGZpbGw9IiNlMmU4ZjAiLz48L3N2Zz4=')]">
+                            <canvas 
+                                ref={canvasRef}
+                                className="absolute inset-0 w-full h-full touch-none"
+                                onMouseDown={startDrawing}
+                                onMouseMove={draw}
+                                onMouseUp={stopDrawing}
+                                onMouseOut={stopDrawing}
+                                onTouchStart={startDrawing}
+                                onTouchMove={draw}
+                                onTouchEnd={stopDrawing}
+                            />
+                            {/* Toolbar */}
+                            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex gap-2 bg-white p-2 rounded-2xl shadow-xl border border-slate-200">
+                                 <button onClick={() => setColor('#0f172a')} className={`w-10 h-10 rounded-xl bg-slate-900 ${color === '#0f172a' ? 'ring-4 ring-blue-300 scale-110' : ''} transition-all`}></button>
+                                 <button onClick={() => setColor('#ef4444')} className={`w-10 h-10 rounded-xl bg-red-500 ${color === '#ef4444' ? 'ring-4 ring-blue-300 scale-110' : ''} transition-all`}></button>
+                                 <button onClick={() => setColor('#3b82f6')} className={`w-10 h-10 rounded-xl bg-blue-500 ${color === '#3b82f6' ? 'ring-4 ring-blue-300 scale-110' : ''} transition-all`}></button>
+                                 <button onClick={() => setColor('#10b981')} className={`w-10 h-10 rounded-xl bg-green-500 ${color === '#10b981' ? 'ring-4 ring-blue-300 scale-110' : ''} transition-all`}></button>
+                                 <div className="w-px bg-slate-200 mx-1"></div>
+                                 <button onClick={() => {
+                                     const canvas = canvasRef.current;
+                                     const ctx = canvas.getContext('2d');
+                                     ctx.clearRect(0, 0, canvas.width, canvas.height);
+                                 }} className="bg-slate-100 hover:bg-slate-200 text-slate-600 w-10 h-10 rounded-xl flex items-center justify-center transition-colors" title="Alles löschen">
+                                     <Trash className="w-5 h-5" />
+                                 </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
         // --- GameScreen Component ---
         const GameScreen = ({ gameState, setGameState, onExit }) => {
             const [selectedOption, setSelectedOption] = useState(null);
             const [isAnswering, setIsAnswering] = useState(false);
             const [feedback, setFeedback] = useState(null);
             const [showExitConfirm, setShowExitConfirm] = useState(false);
+            const [isExplaining, setIsExplaining] = useState(false);
 
             const currentTeam = gameState.teams[gameState.currentTeamIndex];
             const teamConfig = TEAM_CONFIGS[gameState.currentTeamIndex % TEAM_CONFIGS.length];
@@ -1147,6 +1327,7 @@
             if (feedback === 'incorrect') monsterReaction = 'sad';
 
             return (
+                <>
                 <div className="flex flex-col h-[100vh] bg-slate-900 overflow-hidden font-sans text-white relative">
                     <button onClick={() => setShowExitConfirm(true)} className="absolute top-2 right-2 md:top-4 md:right-4 z-[50] p-2 bg-slate-800/80 hover:bg-red-500/80 rounded-lg border border-slate-700 transition-colors">
                         <Home className="w-5 h-5 md:w-6 md:h-6" />
@@ -1254,15 +1435,31 @@
                                                 {gameState.currentQuestion.explanation && <div className="bg-slate-800/80 p-4 rounded-xl max-w-xl text-center border border-white/10 mb-6"><p className="text-slate-200 text-lg"><MathText text={gameState.currentQuestion.explanation}/></p></div>}
                                             </>
                                         )}
-                                        <button onClick={nextTurn} className="px-10 py-5 bg-white text-slate-900 rounded-xl text-2xl font-black hover:scale-105 transition-all shadow-xl flex items-center gap-3">WEITER <ArrowRight /></button>
+                                        <div className="flex flex-col md:flex-row gap-3 justify-center mt-6">
+                                            <button 
+                                                onClick={() => setIsExplaining(true)}
+                                                className="bg-white/20 hover:bg-white/30 text-white px-6 py-4 rounded-2xl font-bold text-lg md:text-xl transition-all shadow-lg flex items-center justify-center gap-2"
+                                            >
+                                                <GraduationCap className="w-6 h-6" /> Erklärmonster
+                                            </button>
+                                            <button 
+                                                onClick={nextTurn}
+                                                className="bg-white text-slate-900 px-8 py-4 rounded-2xl font-black text-lg md:text-xl transition-transform hover:scale-105 shadow-xl flex items-center justify-center gap-2"
+                                            >
+                                                Nächste Frage <ArrowRight className="w-6 h-6" />
+                                            </button>
+                                        </div>
                                     </div>
                                 )}
                             </div>
                         </div>
                     </div>
                 </div>
-            );
-        };
+                
+                {isExplaining && <Whiteboard question={gameState.currentQuestion} onClose={() => setIsExplaining(false)} />}
+            </>
+        );
+    };
 
         // --- VictoryScreen Component ---
         const VictoryScreen = ({ gameState, onRestart }) => {
