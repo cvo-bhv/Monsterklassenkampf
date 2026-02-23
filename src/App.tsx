@@ -1,0 +1,2046 @@
+
+        import React, { useState, useEffect, useRef } from 'react';
+        import { createRoot } from 'react-dom/client';
+        // Importing Lucide React components properly
+        import { 
+            Maximize, Minimize, Plus, Play, User, X, Briefcase, Calculator, 
+            Scissors, ArrowRightLeft, Layers, PenTool, Edit3, Save, Upload, 
+            Download, Trash, Zap, BookOpen, Clock, AlignLeft, Smile, 
+            Trophy, RefreshCw, Home, AlertCircle, ArrowRight, Loader2, Star, 
+            Frown, Users, Cloud, Check, DownloadCloud, UploadCloud, GraduationCap, Settings,
+            Sparkles, Copy
+        } from 'lucide-react';
+        import confetti from 'canvas-confetti';
+
+        // ==========================================================================================
+        // 1. DATA LAYER (NEXTCLOUD / WEBDAV)
+        // ==========================================================================================
+
+        /* --- NEXTCLOUD KONFIGURATION --- */
+        /* TRAGEN SIE HIER IHRE DATEN EIN */
+        const NC_CONFIG = {
+            // Die vollständige WebDAV URL zu dem Ordner, in dem die Spiel-Daten liegen sollen.
+            // Der Ordner MUSS bereits existieren!
+            // Beispiel: "https://cloud.schule.de/remote.php/dav/files/lehrername/BruchMonster/klassenkampf/"
+            url: "https://victorymind.de/nextcloud/remote.php/dav/files/hosting236423/klassenkampf/", 
+            
+            // Ihr Benutzername
+            user: "hosting236423", 
+            
+            // Generieren Sie am besten ein App-Passwort in den Nextcloud Sicherheitseinstellungen
+            password: "N5tke-HpFXK-LweHZ-eHGCg-rdQxT" 
+        };
+        /* ------------------------------- */
+
+        const ncFetch = async (filename, method = 'GET', body = null) => {
+            if (NC_CONFIG.url.includes("YOUR-NEXTCLOUD-INSTANCE")) {
+                // Nur Warnung in Konsole, kein Alert, damit Spiel auch ohne Cloud funktioniert
+                console.warn("Nextcloud nicht konfiguriert. Datenspeicherung deaktiviert.");
+                return null;
+            }
+
+            const headers = new Headers();
+            headers.set("Authorization", "Basic " + btoa(NC_CONFIG.user + ":" + NC_CONFIG.password));
+            headers.set("Content-Type", "application/json");
+            // WICHTIG: Verhindert oft CORS Preflight Probleme bei manchen NC Konfigurationen
+            headers.set("X-Requested-With", "XMLHttpRequest"); 
+
+            const options = { method, headers };
+            if (body) options.body = JSON.stringify(body, null, 2);
+
+            try {
+                const response = await fetch(NC_CONFIG.url + filename, options);
+                
+                if (!response.ok) {
+                    if (response.status === 404 && method === 'GET') {
+                        return null; // Datei existiert noch nicht
+                    }
+                    throw new Error(`HTTP ${response.status} ${response.statusText}`);
+                }
+
+                if (method === 'GET') {
+                    return await response.json();
+                }
+                return true; // Success für PUT/DELETE
+            } catch (e) {
+                console.error("NC Sync Error:", e);
+                throw e; // Throw to let UI handle it
+            }
+        };
+
+        // Helper Methods for specific data types
+        const CloudService = {
+            saveTeams: async (teams) => ncFetch('teams.json', 'PUT', teams),
+            loadTeams: async () => ncFetch('teams.json', 'GET'),
+            
+            saveCustomQuestions: async (questions) => ncFetch('custom_questions.json', 'PUT', questions),
+            loadCustomQuestions: async () => ncFetch('custom_questions.json', 'GET'),
+
+            saveHighscore: async (entry) => {
+                let current = [];
+                try { current = await ncFetch('highscores.json', 'GET') || []; } catch(e) {}
+                // Add new entry
+                current.push({
+                    ...entry,
+                    date: new Date().toISOString()
+                });
+                // Sort by score desc
+                current.sort((a, b) => b.score - a.score);
+                // Keep top 20
+                current = current.slice(0, 20);
+                await ncFetch('highscores.json', 'PUT', current);
+                return current;
+            },
+            loadHighscores: async () => {
+                try { return await ncFetch('highscores.json', 'GET') || []; } catch(e) { return []; }
+            }
+        };
+
+
+        // ==========================================================================================
+        // 2. TYPES & CONSTANTS
+        // ==========================================================================================
+
+        const GamePhase = {
+            SETUP: 'SETUP',
+            PLAYING: 'PLAYING',
+            VICTORY: 'VICTORY'
+        };
+
+        const MonsterType = {
+            FIRE: 'FIRE', WATER: 'WATER', EARTH: 'EARTH', ELECTRIC: 'ELECTRIC',
+            PSYCHIC: 'PSYCHIC', ICE: 'ICE', TOXIC: 'TOXIC', VOID: 'VOID',
+            WIND: 'WIND', SOLAR: 'SOLAR', METAL: 'METAL', FAIRY: 'FAIRY'
+        };
+
+        const MonsterStage = {
+            EGG: 0, HATCHLING: 1, TEEN: 2, ADULT: 3, TITAN: 4
+        };
+
+        const MAX_TEAMS = 12;
+        const EXP_TO_LEVEL = 100;
+        const WINNING_STAGE = 4;
+
+        const TEAM_CONFIGS = [
+            { type: MonsterType.FIRE, color: 'bg-red-500', shadow: 'shadow-red-500/50', border: 'border-red-400', text: 'text-red-100' },
+            { type: MonsterType.WATER, color: 'bg-blue-500', shadow: 'shadow-blue-500/50', border: 'border-blue-400', text: 'text-blue-100' },
+            { type: MonsterType.EARTH, color: 'bg-green-500', shadow: 'shadow-green-500/50', border: 'border-green-400', text: 'text-green-100' },
+            { type: MonsterType.ELECTRIC, color: 'bg-yellow-500', shadow: 'shadow-yellow-500/50', border: 'border-yellow-400', text: 'text-yellow-100' },
+            { type: MonsterType.PSYCHIC, color: 'bg-purple-500', shadow: 'shadow-purple-500/50', border: 'border-purple-400', text: 'text-purple-100' },
+            { type: MonsterType.ICE, color: 'bg-cyan-500', shadow: 'shadow-cyan-500/50', border: 'border-cyan-400', text: 'text-cyan-100' },
+            { type: MonsterType.TOXIC, color: 'bg-lime-500', shadow: 'shadow-lime-500/50', border: 'border-lime-400', text: 'text-lime-100' },
+            { type: MonsterType.VOID, color: 'bg-indigo-500', shadow: 'shadow-indigo-500/50', border: 'border-indigo-400', text: 'text-indigo-100' },
+            { type: MonsterType.WIND, color: 'bg-teal-500', shadow: 'shadow-teal-500/50', border: 'border-teal-400', text: 'text-teal-100' },
+            { type: MonsterType.SOLAR, color: 'bg-orange-500', shadow: 'shadow-orange-500/50', border: 'border-orange-400', text: 'text-orange-100' },
+            { type: MonsterType.METAL, color: 'bg-slate-500', shadow: 'shadow-slate-500/50', border: 'border-slate-400', text: 'text-slate-100' },
+            { type: MonsterType.FAIRY, color: 'bg-pink-500', shadow: 'shadow-pink-500/50', border: 'border-pink-400', text: 'text-pink-100' },
+        ];
+
+        // ==========================================================================================
+        // 3. SOUND SERVICE
+        // ==========================================================================================
+        let audioCtx = null;
+        let isMuted = false;
+
+        const getContext = () => {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            return audioCtx;
+        };
+
+        const playTone = (freq, type, duration, startTime = 0, vol = 0.1) => {
+            if (isMuted) return;
+            const ctx = getContext();
+            if (ctx.state === 'suspended') ctx.resume();
+
+            const osc = ctx.createOscillator();
+            const gainNode = ctx.createGain();
+
+            osc.type = type;
+            osc.frequency.setValueAtTime(freq, ctx.currentTime + startTime);
+            
+            gainNode.gain.setValueAtTime(vol, ctx.currentTime + startTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + startTime + duration);
+
+            osc.connect(gainNode);
+            gainNode.connect(ctx.destination);
+
+            osc.start(ctx.currentTime + startTime);
+            osc.stop(ctx.currentTime + startTime + duration);
+        };
+
+        const SoundService = {
+            init: () => {
+                const ctx = getContext();
+                if (ctx.state === 'suspended') ctx.resume();
+            },
+            playClick: () => playTone(800, 'sine', 0.1, 0, 0.05),
+            playGameStart: () => {
+                if (isMuted) return;
+                const ctx = getContext();
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(220, ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.5);
+                gain.gain.setValueAtTime(0.1, ctx.currentTime);
+                gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.5);
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.start();
+                osc.stop(ctx.currentTime + 0.5);
+            },
+            playCorrect: () => {
+                playTone(523.25, 'sine', 0.3, 0, 0.1);
+                playTone(659.25, 'sine', 0.3, 0.1, 0.1);
+                playTone(783.99, 'sine', 0.4, 0.2, 0.1);
+            },
+            playIncorrect: () => {
+                playTone(150, 'sawtooth', 0.4, 0, 0.1);
+            },
+            playLevelUp: () => {
+                const notes = [523.25, 659.25, 783.99, 1046.50, 1318.51, 1567.98];
+                notes.forEach((note, i) => playTone(note, 'square', 0.2, i * 0.08, 0.05));
+            },
+            playVictory: () => {
+                const now = 0;
+                playTone(523.25, 'triangle', 0.2, now, 0.2);
+                playTone(523.25, 'triangle', 0.2, now + 0.2, 0.2);
+                playTone(523.25, 'triangle', 0.2, now + 0.4, 0.2);
+                playTone(783.99, 'square', 0.6, now + 0.6, 0.2);
+            },
+            toggleMute: () => { isMuted = !isMuted; return isMuted; }
+        };
+
+        // ==========================================================================================
+        // 4. QUESTION SERVICE (STATIC DATA + GENERATOR)
+        // ==========================================================================================
+        
+        const STATIC_QUESTIONS = [
+            // BRÜCHE ADD/SUB
+            { text: "Monster-Snack:", expression: "1/5 + 2/5", options: ["3/5", "2/5", "1/5", "4/5"], correctIndex: 0, difficulty: "easy", category: "ADD_SUB" },
+            { text: "Heilungstrank mischen:", expression: "2/7 + 3/7", options: ["5/7", "6/7", "1/7", "4/7"], correctIndex: 0, difficulty: "easy", category: "ADD_SUB" },
+            { text: "Schild aufladen:", expression: "1/4 + 2/4", options: ["3/4", "1/2", "1/4", "2/4"], correctIndex: 0, difficulty: "easy", category: "ADD_SUB" },
+            { text: "XP sammeln:", expression: "3/8 + 4/8", options: ["7/8", "1/8", "5/8", "6/8"], correctIndex: 0, difficulty: "easy", category: "ADD_SUB" },
+            { text: "Mana regenerieren:", expression: "1/10 + 7/10", options: ["8/10", "6/10", "4/10", "9/10"], correctIndex: 0, difficulty: "easy", category: "ADD_SUB" },
+            { text: "Zweikampf:", expression: "2/9 + 4/9", options: ["6/9", "5/9", "7/9", "3/9"], correctIndex: 0, difficulty: "easy", category: "ADD_SUB" },
+            { text: "Schaden erleiden:", expression: "3/4 - 1/4", options: ["2/4", "3/4", "1/4", "4/4"], correctIndex: 0, difficulty: "easy", category: "ADD_SUB" },
+            { text: "Gold verlieren:", expression: "5/6 - 4/6", options: ["1/6", "2/6", "3/6", "5/6"], correctIndex: 0, difficulty: "easy", category: "ADD_SUB" },
+            { text: "Energieverbrauch:", expression: "7/8 - 3/8", options: ["4/8", "3/8", "5/8", "2/8"], correctIndex: 0, difficulty: "easy", category: "ADD_SUB" },
+            // ADD_SUB_PRO
+            { text: "Achtung! Nenner sind verschieden:", expression: "1/2 + 1/4", options: ["3/4", "2/6", "2/4", "1/6"], correctIndex: 0, difficulty: "medium", category: "ADD_SUB_PRO" },
+            { text: "Addiere diese Brüche:", expression: "1/3 + 1/6", options: ["3/6", "2/9", "1/2", "2/6"], correctIndex: 2, difficulty: "medium", category: "ADD_SUB_PRO" },
+            { text: "Das Monster rechnet schwer:", expression: "1/2 + 1/8", options: ["5/8", "2/10", "6/8", "2/8"], correctIndex: 0, difficulty: "medium", category: "ADD_SUB_PRO" },
+            { text: "Was kommt hier raus?", expression: "1/4 + 3/8", options: ["5/8", "4/12", "4/8", "6/8"], correctIndex: 0, difficulty: "medium", category: "ADD_SUB_PRO" },
+            // MULTIPLY
+            { text: "Was ist die Hälfte von einem Halb?", expression: "1/2 * 1/2", options: ["1/4", "2/4", "1", "1/2"], correctIndex: 0, difficulty: "easy", category: "MULTIPLY" },
+            { text: "Multipliziere:", expression: "1/3 * 1/2", options: ["1/6", "1/5", "2/6", "2/5"], correctIndex: 0, difficulty: "easy", category: "MULTIPLY" },
+            { text: "Rechne aus:", expression: "2/3 * 1/2", options: ["1/3", "3/5", "2/6", "2/5"], correctIndex: 0, difficulty: "medium", category: "MULTIPLY" },
+            // DE_WORTARTEN
+            { text: "Welche Wortart ist das unterstrichene Wort?", expression: "Der _Skin_ kostet 1200 V-Bucks.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 0, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Bestimme die Wortart:", expression: "Micky Maus _lacht_ sehr laut.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 1, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Was ist das für ein Wort?", expression: "Das Trikot von Bayern ist _rot_.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 2, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Wortart erkennen:", expression: "_Der_ Battle-Pass ist neu.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 3, difficulty: "easy", category: "DE_WORTARTEN" },
+            // NEUE FRAGEN (60 Stk)
+            { text: "Welche Wortart ist das unterstrichene Wort?", expression: "Die _Sonne_ scheint hell.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 0, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Bestimme die Wortart:", expression: "Der Hund _bellt_ laut.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 1, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Was ist das für ein Wort?", expression: "Das Auto ist _schnell_.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 2, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Wortart erkennen:", expression: "_Ein_ Vogel singt.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 3, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Welche Wortart ist das unterstrichene Wort?", expression: "Wir essen _Pizza_.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 0, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Bestimme die Wortart:", expression: "Sie _rennt_ schnell.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 1, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Was ist das für ein Wort?", expression: "Der Baum ist _hoch_.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 2, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Wortart erkennen:", expression: "_Die_ Katze schläft.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 3, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Welche Wortart ist das unterstrichene Wort?", expression: "Das _Haus_ ist groß.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 0, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Bestimme die Wortart:", expression: "Er _liest_ ein Buch.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 1, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Was ist das für ein Wort?", expression: "Der Himmel ist _blau_.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 2, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Wortart erkennen:", expression: "_Das_ Kind spielt.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 3, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Welche Wortart ist das unterstrichene Wort?", expression: "Ich mag _Schokolade_.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 0, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Bestimme die Wortart:", expression: "Wir _singen_ ein Lied.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 1, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Was ist das für ein Wort?", expression: "Der Film war _spannend_.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 2, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Wortart erkennen:", expression: "_Eine_ Blume blüht.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 3, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Welche Wortart ist das unterstrichene Wort?", expression: "Der _Ball_ ist rund.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 0, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Bestimme die Wortart:", expression: "Sie _tanzt_ gerne.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 1, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Was ist das für ein Wort?", expression: "Das Wasser ist _kalt_.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 2, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Wortart erkennen:", expression: "_Der_ Apfel ist süß.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 3, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Welche Wortart ist das unterstrichene Wort?", expression: "Wir gehen in die _Schule_.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 0, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Bestimme die Wortart:", expression: "Er _schreibt_ einen Brief.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 1, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Was ist das für ein Wort?", expression: "Die Aufgabe ist _schwer_.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 2, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Wortart erkennen:", expression: "_Die_ Maus ist klein.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 3, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Welche Wortart ist das unterstrichene Wort?", expression: "Das _Buch_ ist spannend.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 0, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Bestimme die Wortart:", expression: "Wir _spielen_ Fußball.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 1, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Was ist das für ein Wort?", expression: "Das Eis ist _lecker_.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 2, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Wortart erkennen:", expression: "_Ein_ Hund bellt.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 3, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Welche Wortart ist das unterstrichene Wort?", expression: "Die _Blume_ ist schön.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 0, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Bestimme die Wortart:", expression: "Er _schläft_ tief.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 1, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Was ist das für ein Wort?", expression: "Der Weg ist _lang_.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 2, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Wortart erkennen:", expression: "_Das_ Auto fährt.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 3, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Welche Wortart ist das unterstrichene Wort?", expression: "Der _Vogel_ fliegt.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 0, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Bestimme die Wortart:", expression: "Wir _lernen_ für den Test.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 1, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Was ist das für ein Wort?", expression: "Die Musik ist _laut_.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 2, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Wortart erkennen:", expression: "_Eine_ Katze miaut.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 3, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Welche Wortart ist das unterstrichene Wort?", expression: "Das _Fahrrad_ ist neu.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 0, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Bestimme die Wortart:", expression: "Sie _lacht_ fröhlich.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 1, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Was ist das für ein Wort?", expression: "Der Kuchen ist _süß_.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 2, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Wortart erkennen:", expression: "_Der_ Baum wächst.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 3, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Welche Wortart ist das unterstrichene Wort?", expression: "Die _Uhr_ tickt.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 0, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Bestimme die Wortart:", expression: "Er _malt_ ein Bild.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 1, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Was ist das für ein Wort?", expression: "Das Bett ist _weich_.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 2, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Wortart erkennen:", expression: "_Die_ Sonne scheint.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 3, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Welche Wortart ist das unterstrichene Wort?", expression: "Der _Stuhl_ ist bequem.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 0, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Bestimme die Wortart:", expression: "Wir _essen_ zu Mittag.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 1, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Was ist das für ein Wort?", expression: "Der Tee ist _heiß_.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 2, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Wortart erkennen:", expression: "_Das_ Fenster ist offen.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 3, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Welche Wortart ist das unterstrichene Wort?", expression: "Die _Tür_ ist zu.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 0, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Bestimme die Wortart:", expression: "Sie _weint_ traurig.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 1, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Was ist das für ein Wort?", expression: "Das Zimmer ist _dunkel_.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 2, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Wortart erkennen:", expression: "_Ein_ Vogel fliegt.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 3, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Welche Wortart ist das unterstrichene Wort?", expression: "Der _Tisch_ ist groß.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 0, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Bestimme die Wortart:", expression: "Er _liest_ die Zeitung.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 1, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Was ist das für ein Wort?", expression: "Die Suppe ist _salzig_.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 2, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Wortart erkennen:", expression: "_Die_ Blume duftet.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 3, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Welche Wortart ist das unterstrichene Wort?", expression: "Das _Bild_ ist bunt.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 0, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Bestimme die Wortart:", expression: "Wir _singen_ im Chor.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 1, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Was ist das für ein Wort?", expression: "Der Wind ist _stark_.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 2, difficulty: "easy", category: "DE_WORTARTEN" },
+            { text: "Wortart erkennen:", expression: "_Der_ Hund schläft.", options: ["Nomen", "Verb", "Adjektiv", "Artikel"], correctIndex: 3, difficulty: "easy", category: "DE_WORTARTEN" },
+
+            // ... (Includes all questions logically)
+        ];
+
+        const usedQuestionIndices = new Set();
+
+        const resetQuestionHistory = () => {
+            usedQuestionIndices.clear();
+        };
+
+        const generateQuestion = async (difficulty, category, customPool = []) => {
+            // Simulierte Verzögerung
+            await new Promise(resolve => setTimeout(resolve, 50));
+
+            let pool = [];
+            if (category === 'CUSTOM') {
+                pool = customPool.length > 0 ? customPool : STATIC_QUESTIONS;
+            } else {
+                pool = STATIC_QUESTIONS;
+            }
+
+            const candidates = pool
+                .map((q, index) => ({ q, index: `${category === 'CUSTOM' ? 'c' : 's'}-${index}` }))
+                .filter(item => {
+                    if (category === 'CUSTOM') return true;
+                    
+                    const isGermanCategory = item.q.category.startsWith('DE_');
+                    if (category === 'ALL' && isGermanCategory) return false;
+
+                    // Ignoriere Schwierigkeitsgrad für besseren Mix
+                    const diffMatch = true; 
+                    
+                    let catMatch = true;
+                    if (category !== 'ALL') {
+                        if (category === 'EXPAND_SIMPLIFY') {
+                            catMatch = item.q.category === 'EXPAND' || item.q.category === 'SIMPLIFY';
+                        } else {
+                            catMatch = item.q.category === category;
+                        }
+                    }
+                    return diffMatch && catMatch;
+                });
+
+            let available = candidates.filter(item => !usedQuestionIndices.has(item.index));
+
+            if (available.length === 0) {
+                if (candidates.length > 0) {
+                    candidates.forEach(c => usedQuestionIndices.delete(c.index));
+                    available = candidates;
+                } else {
+                    available = pool.map((q, i) => ({ q, index: `fallback-${i}` }));
+                }
+            }
+
+            const randomIndex = Math.floor(Math.random() * available.length);
+            const selectedItem = available[randomIndex];
+
+            if (selectedItem) {
+                usedQuestionIndices.add(selectedItem.index);
+                
+                // Optionen mischen, damit die richtige Antwort nicht immer an derselben Stelle ist
+                const q = selectedItem.q;
+                const optionsWithIndex = q.options.map((opt, i) => ({ 
+                    text: opt, 
+                    isCorrect: i === q.correctIndex 
+                }));
+                
+                // Fisher-Yates Shuffle für die Optionen
+                for (let i = optionsWithIndex.length - 1; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [optionsWithIndex[i], optionsWithIndex[j]] = [optionsWithIndex[j], optionsWithIndex[i]];
+                }
+                
+                const newOptions = optionsWithIndex.map(o => o.text);
+                const newCorrectIndex = optionsWithIndex.findIndex(o => o.isCorrect);
+
+                return {
+                    ...q,
+                    options: newOptions,
+                    correctIndex: newCorrectIndex,
+                    id: Date.now().toString() + Math.random().toString()
+                };
+            } else {
+                return { ...STATIC_QUESTIONS[0], id: 'error-fallback' };
+            }
+        };
+
+        // ==========================================================================================
+        // 5. COMPONENTS
+        // ==========================================================================================
+
+        // --- MathText Component ---
+        const MathText = ({ text, className = "", scale = 1 }) => {
+            const fractionRegex = /(?:(\d+)\s+)?(\d+)\/(\d+)/g;
+            const parts = [];
+            let lastIndex = 0;
+            let match;
+
+            const formatText = (rawText, keyPrefix) => {
+                const formatRegex = /_([^_]+)_/g;
+                const formattedParts = [];
+                let lastFormatIndex = 0;
+                let formatMatch;
+
+                while ((formatMatch = formatRegex.exec(rawText)) !== null) {
+                    if (formatMatch.index > lastFormatIndex) {
+                        formattedParts.push(<span key={`${keyPrefix}-txt-${lastFormatIndex}`}>{rawText.substring(lastFormatIndex, formatMatch.index)}</span>);
+                    }
+                    formattedParts.push(
+                        <span key={`${keyPrefix}-u-${formatMatch.index}`} className="underline decoration-2 md:decoration-4 underline-offset-4 decoration-yellow-400">
+                            {formatMatch[1]}
+                        </span>
+                    );
+                    lastFormatIndex = formatRegex.lastIndex;
+                }
+                if (lastFormatIndex < rawText.length) {
+                    formattedParts.push(<span key={`${keyPrefix}-txt-end`}>{rawText.substring(lastFormatIndex)}</span>);
+                }
+                return formattedParts;
+            };
+
+            while ((match = fractionRegex.exec(text)) !== null) {
+                if (match.index > lastIndex) {
+                    const subText = text.substring(lastIndex, match.index);
+                    parts.push(...formatText(subText, `pre-${lastIndex}`));
+                }
+                const [fullMatch, whole, num, den] = match;
+                const fontSize = `${0.85 * scale}em`;
+
+                parts.push(
+                    <span key={`math-${match.index}`} className="inline-flex items-center align-middle mx-[0.3em] font-sans">
+                        {whole && <span className="mr-[0.3em] font-bold">{whole}</span>}
+                        <span className="inline-flex flex-col text-center justify-center" style={{ fontSize }}>
+                            <span className="border-b-[2px] md:border-b-[3px] border-solid border-current px-[0.3em] pb-[0.1em] mb-[0.1em] font-bold block min-w-[1.2em] leading-tight">{num}</span>
+                            <span className="px-[0.3em] pt-[0.1em] font-bold block min-w-[1.2em] leading-tight">{den}</span>
+                        </span>
+                    </span>
+                );
+                lastIndex = fractionRegex.lastIndex;
+            }
+            if (lastIndex < text.length) {
+                const subText = text.substring(lastIndex);
+                parts.push(...formatText(subText, `post-${lastIndex}`));
+            }
+            return <span className={className}>{parts}</span>;
+        };
+
+        // --- MonsterDisplay Component ---
+        const MonsterDisplay = ({ type, stage, reaction = 'idle', isAnimating }) => {
+            const currentReaction = isAnimating ? 'happy' : reaction;
+            
+            const getColors = () => {
+                switch(type) {
+                    case MonsterType.FIRE: return { main: '#EF4444', accent: '#FECACA' }; 
+                    case MonsterType.WATER: return { main: '#3B82F6', accent: '#BFDBFE' }; 
+                    case MonsterType.EARTH: return { main: '#10B981', accent: '#A7F3D0' };
+                    case MonsterType.ELECTRIC: return { main: '#EAB308', accent: '#FEF08A' };
+                    case MonsterType.PSYCHIC: return { main: '#A855F7', accent: '#E9D5FF' };
+                    case MonsterType.ICE: return { main: '#06B6D4', accent: '#CFFAFE' };
+                    case MonsterType.TOXIC: return { main: '#84CC16', accent: '#D9F99D' };
+                    case MonsterType.VOID: return { main: '#6366F1', accent: '#C7D2FE' };
+                    case MonsterType.WIND: return { main: '#14B8A6', accent: '#99F6E4' };
+                    case MonsterType.SOLAR: return { main: '#F97316', accent: '#FFEDD5' };
+                    case MonsterType.METAL: return { main: '#64748B', accent: '#CBD5E1' };
+                    case MonsterType.FAIRY: return { main: '#EC4899', accent: '#FBCFE8' };
+                    default: return { main: '#6B7280', accent: '#E5E7EB' };
+                }
+            };
+            const c = getColors();
+            let animationClass = 'animate-float';
+            if (currentReaction === 'happy') animationClass = 'animate-happy';
+            if (currentReaction === 'sad') animationClass = 'animate-wobble';
+
+            const renderMonster = () => {
+                switch (stage) {
+                    case MonsterStage.EGG:
+                        return (
+                            <svg viewBox="0 0 100 100" className={`w-full h-full drop-shadow-lg ${animationClass}`}>
+                                <ellipse cx="50" cy="60" rx="30" ry="38" fill={c.main} stroke="white" strokeWidth="3" />
+                                <path d="M35 40 Q 50 55 65 40" stroke={c.accent} strokeWidth="3" fill="none" opacity="0.6"/>
+                                <g className={currentReaction === 'idle' ? 'animate-crack' : ''}>
+                                    <path d="M50 22 L 45 30 L 55 35 L 50 42" stroke="rgba(0,0,0,0.2)" strokeWidth="2" fill="none" />
+                                </g>
+                            </svg>
+                        );
+                    case MonsterStage.HATCHLING:
+                        return (
+                            <svg viewBox="0 0 100 100" className={`w-full h-full drop-shadow-xl ${animationClass}`}>
+                                <circle cx="50" cy="60" r="25" fill={c.main} stroke="white" strokeWidth="3" />
+                                <g className={currentReaction === 'sad' ? '' : 'animate-blink'}>
+                                    <circle cx="42" cy="55" r="6" fill="white" />
+                                    <circle cx="42" cy="55" r="2" fill="black" />
+                                    <circle cx="58" cy="55" r="6" fill="white" />
+                                    <circle cx="58" cy="55" r="2" fill="black" />
+                                </g>
+                                <path d="M28 50 Q 50 10 72 50 L 65 55 L 60 48 L 50 55 L 40 48 L 35 55 Z" fill="white" stroke="#e5e7eb" strokeWidth="2" />
+                            </svg>
+                        );
+                    case MonsterStage.TEEN:
+                        return (
+                            <svg viewBox="0 0 100 100" className={`w-full h-full drop-shadow-2xl ${animationClass}`}>
+                                <path d="M30 70 Q 20 90 40 90" stroke={c.main} strokeWidth="8" strokeLinecap="round" fill="none" />
+                                <path d="M70 70 Q 80 90 60 90" stroke={c.main} strokeWidth="8" strokeLinecap="round" fill="none" />
+                                <rect x="30" y="40" width="40" height="40" rx="10" fill={c.main} stroke="white" strokeWidth="3" />
+                                <g className={currentReaction === 'sad' ? '' : 'animate-blink'}>
+                                    <circle cx="45" cy="55" r="5" fill="white" />
+                                    <circle cx="45" cy="55" r="2" fill="black" />
+                                    <circle cx="65" cy="55" r="3" fill="white" />
+                                    <circle cx="65" cy="55" r="1" fill="black" />
+                                </g>
+                                <path d="M35 40 L 35 25 L 45 40 L 55 20 L 65 40 Z" fill={c.accent} />
+                            </svg>
+                        );
+                    case MonsterStage.ADULT:
+                        return (
+                            <svg viewBox="0 0 100 100" className={`w-full h-full drop-shadow-2xl ${animationClass}`}>
+                                <path d="M20 50 Q 10 20 40 40" fill={c.accent} opacity="0.8" />
+                                <path d="M80 50 Q 90 20 60 40" fill={c.accent} opacity="0.8" />
+                                <path d="M30 80 L 25 95 L 40 95 L 35 80" fill={c.main} stroke="white" strokeWidth="2"/>
+                                <path d="M70 80 L 75 95 L 60 95 L 65 80" fill={c.main} stroke="white" strokeWidth="2"/>
+                                <path d="M25 40 Q 50 20 75 40 L 80 80 Q 50 90 20 80 Z" fill={c.main} stroke="white" strokeWidth="3" />
+                                <g className={currentReaction === 'sad' ? '' : 'animate-blink'}>
+                                    <circle cx="40" cy="55" r="4" fill="white" />
+                                    <circle cx="40" cy="55" r="1.5" fill="black" />
+                                    <circle cx="60" cy="55" r="4" fill="white" />
+                                    <circle cx="60" cy="55" r="1.5" fill="black" />
+                                </g>
+                            </svg>
+                        );
+                    case MonsterStage.TITAN:
+                        return (
+                            <svg viewBox="0 0 100 100" className={`w-full h-full drop-shadow-[0_20px_20px_rgba(0,0,0,0.5)] ${animationClass}`}>
+                                <circle cx="50" cy="50" r="48" fill={c.accent} opacity="0.3" className="animate-pulse-glow" />
+                                <path d="M15 40 Q 50 -10 85 40 L 90 85 Q 50 100 10 85 Z" fill={c.main} stroke="white" strokeWidth="4" />
+                                <path d="M30 30 L 30 10 L 40 30 L 50 5 L 60 30 L 70 10 L 70 30" fill="#FCD34D" stroke="white" strokeWidth="2" />
+                                <g className={currentReaction === 'sad' ? '' : 'animate-blink'}>
+                                    <rect x="30" y="45" width="15" height="10" fill="white" />
+                                    <rect x="35" y="48" width="5" height="5" fill="black" />
+                                    <rect x="55" y="45" width="15" height="10" fill="white" />
+                                    <rect x="60" y="48" width="5" height="5" fill="black" />
+                                </g>
+                            </svg>
+                        );
+                    default: return null;
+                }
+            };
+
+            return (
+                <div className={`relative transition-all duration-500 transform ${stage === MonsterStage.TITAN ? 'scale-125' : 'scale-100'}`}>
+                    {renderMonster()}
+                </div>
+            );
+        };
+
+        // --- SetupScreen Component ---
+        const SetupScreen = ({ onStart }) => {
+            const [names, setNames] = useState(['']);
+            const [selectedSubject, setSelectedSubject] = useState('MATH');
+            const [selectedCategory, setSelectedCategory] = useState('ALL');
+            const [customQuestions, setCustomQuestions] = useState([]);
+            const [selectedMissionName, setSelectedMissionName] = useState('Standard');
+            const [editorMissionName, setEditorMissionName] = useState('Standard');
+            const [draftQuestions, setDraftQuestions] = useState([]);
+            const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+            const customMissionsList = [...new Set(customQuestions.map(q => q.missionName || 'Standard'))];
+            const [isEditorOpen, setIsEditorOpen] = useState(false);
+            const [isPromptGeneratorOpen, setIsPromptGeneratorOpen] = useState(false);
+            const [promptData, setPromptData] = useState({
+                topic: '',
+                subject: '',
+                grade: '',
+                count: 10,
+                additionalText: ''
+            });
+            const [generatedPrompt, setGeneratedPrompt] = useState('');
+            const [aiJsonImport, setAiJsonImport] = useState('');
+            const [showHighscores, setShowHighscores] = useState(false);
+            const [highscores, setHighscores] = useState([]);
+            const [isLoadingCloud, setIsLoadingCloud] = useState(false);
+            
+            const [savedTeamSets, setSavedTeamSets] = useState(() => {
+                const saved = localStorage.getItem('monster_klassenkampf_teams');
+                return saved ? JSON.parse(saved) : [];
+            });
+            const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+            
+            const [editQ, setEditQ] = useState({
+                text: '', expression: '', options: ['', '', '', ''], correctIndex: 0, difficulty: 'medium', category: 'CUSTOM'
+            });
+            const [jsonImport, setJsonImport] = useState('');
+
+            useEffect(() => {
+                const loadData = async () => {
+                    setIsLoadingCloud(true);
+                    const loadedQ = await CloudService.loadCustomQuestions();
+                    if (loadedQ) setCustomQuestions(loadedQ);
+                    
+                    const loadedH = await CloudService.loadHighscores();
+                    if (loadedH) setHighscores(loadedH);
+                    setIsLoadingCloud(false);
+                };
+                loadData();
+            }, []);
+
+            const addTeam = () => { SoundService.playClick(); if (names.length < MAX_TEAMS) setNames([...names, '']); };
+            const removeTeam = (index) => { SoundService.playClick(); setNames(names.filter((_, i) => i !== index)); };
+            const updateName = (index, value) => { const u = [...names]; u[index] = value; setNames(u); };
+
+            const handleStart = () => {
+                if (canStart) {
+                    SoundService.init();
+                    SoundService.playGameStart();
+                    const filteredCustomQuestions = customQuestions.filter(q => (q.missionName || 'Standard') === selectedMissionName);
+                    onStart(names, selectedCategory, filteredCustomQuestions);
+                }
+            };
+
+            const handleSubjectChange = (subj) => {
+                SoundService.playClick();
+                setSelectedSubject(subj);
+                if (subj === 'MATH') setSelectedCategory('ALL');
+                if (subj === 'GERMAN') setSelectedCategory('DE_WORTARTEN');
+            };
+
+            const canStart = names.length >= 1 && names.every(n => n.trim().length > 0);
+
+            // Team Saving Logic
+            const saveCurrentSetup = () => {
+                if (!canStart) return alert("Bitte erst gültige Teams eingeben.");
+                const setName = prompt("Bitte gib einen Namen für diese Klasse ein (z.B. 'Klasse 5a'):");
+                if (!setName || setName.trim() === '') return;
+
+                const newSet = {
+                    id: Date.now().toString(),
+                    name: setName.trim(),
+                    teams: names
+                };
+
+                const updatedSets = [...savedTeamSets, newSet];
+                setSavedTeamSets(updatedSets);
+                localStorage.setItem('monster_klassenkampf_teams', JSON.stringify(updatedSets));
+                alert(`Klasse "${setName}" erfolgreich gespeichert!`);
+            };
+
+            const loadTeamSet = (set) => {
+                setNames(set.teams);
+                setIsSettingsOpen(false);
+            };
+
+            const deleteTeamSet = (id) => {
+                if (confirm('Möchtest du diese Klasse wirklich löschen?')) {
+                    const updatedSets = savedTeamSets.filter(s => s.id !== id);
+                    setSavedTeamSets(updatedSets);
+                    localStorage.setItem('monster_klassenkampf_teams', JSON.stringify(updatedSets));
+                }
+            };
+
+            // Cloud Actions
+            const saveTeamsToCloud = async () => {
+                if (!canStart) return alert("Bitte erst gültige Teams eingeben.");
+                setIsLoadingCloud(true);
+                try {
+                    await CloudService.saveTeams(names);
+                    alert("Teams erfolgreich in der Nextcloud gespeichert!");
+                } catch (e) {
+                    alert(`Fehler beim Speichern:\n${e.message}\n\nMögliche Ursachen:\n1. Der Ordner 'klassenkampf' existiert nicht in deiner Nextcloud.\n2. CORS blockiert die Anfrage (teste es lokal mit einer CORS-Erweiterung oder lade die HTML-Datei auf deinen Server).`);
+                }
+                setIsLoadingCloud(false);
+            };
+
+            const loadTeamsFromCloud = async () => {
+                setIsLoadingCloud(true);
+                try {
+                    const loaded = await CloudService.loadTeams();
+                    if (loaded && Array.isArray(loaded)) {
+                        setNames(loaded);
+                        alert("Teams erfolgreich geladen!");
+                    } else {
+                        alert("Keine gespeicherten Teams gefunden.");
+                    }
+                } catch (e) {
+                    alert(`Fehler beim Laden:\n${e.message}\n\nMögliche Ursachen:\n1. CORS blockiert die Anfrage.\n2. Zugangsdaten falsch.`);
+                }
+                setIsLoadingCloud(false);
+            };
+
+            // Editor Logic
+            const addDraftQuestion = () => {
+                if (!editQ.text || !editQ.options || editQ.options.some(o => !o)) return;
+                
+                if (editQ.id) {
+                    // Update existing
+                    setDraftQuestions(draftQuestions.map(q => q.id === editQ.id ? { ...editQ, missionName: editorMissionName || 'Standard' } : q));
+                } else {
+                    // Add new
+                    const newQ = { ...editQ, id: Date.now().toString(), category: 'CUSTOM', missionName: editorMissionName || 'Standard' };
+                    setDraftQuestions([...draftQuestions, newQ]);
+                }
+                
+                setHasUnsavedChanges(true);
+                setEditQ({ text: '', expression: '', options: ['', '', '', ''], correctIndex: 0, difficulty: 'medium', category: 'CUSTOM' });
+                SoundService.playClick();
+            };
+
+            const handleEditQuestion = (q) => {
+                setEditQ(q);
+                SoundService.playClick();
+            };
+
+            const cancelEditQuestion = () => {
+                setEditQ({ text: '', expression: '', options: ['', '', '', ''], correctIndex: 0, difficulty: 'medium', category: 'CUSTOM' });
+            };
+
+            const removeDraftQuestion = (id) => {
+                setDraftQuestions(draftQuestions.filter(q => q.id !== id));
+                setHasUnsavedChanges(true);
+            };
+
+            const saveDraftMission = async () => {
+                let mName = editorMissionName.trim();
+                if (!mName) {
+                    mName = prompt("Bitte gib einen Namen für die Mission ein:");
+                    if (!mName) return false;
+                    setEditorMissionName(mName);
+                }
+                
+                const draftWithMission = draftQuestions.map(q => ({...q, missionName: mName}));
+                const otherQuestions = customQuestions.filter(q => (q.missionName || 'Standard') !== mName);
+                const newSet = [...otherQuestions, ...draftWithMission];
+                
+                setCustomQuestions(newSet);
+                setHasUnsavedChanges(false);
+                
+                try { await CloudService.saveCustomQuestions(newSet); } catch(e) { console.error(e); }
+                alert(`Mission "${mName}" gespeichert!`);
+                return true;
+            };
+
+            const handleCloseEditor = async () => {
+                if (hasUnsavedChanges) {
+                    if (confirm("Du hast ungespeicherte Änderungen. Möchtest du diese jetzt speichern?")) {
+                        const saved = await saveDraftMission();
+                        if (!saved) return;
+                    }
+                }
+                setIsEditorOpen(false);
+            };
+
+            const handleNewMission = () => {
+                if (hasUnsavedChanges) {
+                    if (!confirm("Ungespeicherte Änderungen verwerfen?")) return;
+                }
+                setEditorMissionName('');
+                setDraftQuestions([]);
+                setHasUnsavedChanges(false);
+            };
+
+            const handleSelectMissionToEdit = (e) => {
+                const mName = e.target.value;
+                if (!mName) return;
+                
+                if (hasUnsavedChanges) {
+                    if (!confirm("Ungespeicherte Änderungen verwerfen?")) {
+                        e.target.value = editorMissionName;
+                        return;
+                    }
+                }
+                
+                setEditorMissionName(mName);
+                setDraftQuestions(customQuestions.filter(q => (q.missionName || 'Standard') === mName));
+                setHasUnsavedChanges(false);
+            };
+
+            const handleDeleteMission = async () => {
+                const mName = editorMissionName.trim();
+                if (!mName) return;
+                
+                if (confirm(`Möchtest du die Mission "${mName}" wirklich löschen?`)) {
+                    const newSet = customQuestions.filter(q => (q.missionName || 'Standard') !== mName);
+                    setCustomQuestions(newSet);
+                    setDraftQuestions([]);
+                    setEditorMissionName('');
+                    setHasUnsavedChanges(false);
+                    try { await CloudService.saveCustomQuestions(newSet); } catch(e) { console.error(e); }
+                    alert(`Mission "${mName}" gelöscht!`);
+                }
+            };
+
+            const parseFlexibleJson = (str) => {
+                let jsonStr = str;
+                // Extract array if there's text around it
+                const match = jsonStr.match(/\[[\s\S]*\]/);
+                if (match) {
+                    jsonStr = match[0];
+                }
+                // Remove trailing commas
+                jsonStr = jsonStr.replace(/,\s*([\]}])/g, '$1');
+                return JSON.parse(jsonStr);
+            };
+
+            const handleJsonImport = () => {
+                try {
+                  const parsed = parseFlexibleJson(jsonImport);
+                  if (Array.isArray(parsed)) {
+                    // Basic validation
+                    const valid = parsed.every(q => q.text && Array.isArray(q.options) && typeof q.correctIndex === 'number');
+                    if (valid) {
+                      const newSet = parsed.map(q => ({...q, category: 'CUSTOM', id: q.id || Math.random().toString(), missionName: q.missionName || editorMissionName || 'Standard'}));
+                      setDraftQuestions([...draftQuestions, ...newSet]);
+                      setHasUnsavedChanges(true);
+                      setJsonImport('');
+                      alert("Import erfolgreich! Bitte vergiss nicht zu speichern.");
+                    } else {
+                      alert("Format ungültig. Array von Fragen erwartet.");
+                    }
+                  }
+                } catch (e) {
+                  alert("Ungültiges JSON. Bitte überprüfe das Format.");
+                }
+            };
+
+            const handleFileUpload = (event) => {
+                const file = event.target.files[0];
+                if (!file) return;
+
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    try {
+                        const content = e.target.result;
+                        setJsonImport(content);
+                        // Optional: Auto-import after reading
+                        const parsed = parseFlexibleJson(content);
+                        if (Array.isArray(parsed)) {
+                            const valid = parsed.every(q => q.text && Array.isArray(q.options) && typeof q.correctIndex === 'number');
+                            if (valid) {
+                                const newSet = parsed.map(q => ({...q, category: 'CUSTOM', id: q.id || Math.random().toString(), missionName: q.missionName || editorMissionName || 'Standard'}));
+                                setDraftQuestions([...draftQuestions, ...newSet]);
+                                setHasUnsavedChanges(true);
+                                setJsonImport('');
+                                alert("Datei erfolgreich importiert! Bitte vergiss nicht zu speichern.");
+                            } else {
+                                alert("Format ungültig. Array von Fragen erwartet.");
+                            }
+                        }
+                    } catch (err) {
+                        alert("Fehler beim Lesen der Datei. Ist es ein gültiges JSON?");
+                    }
+                };
+                reader.readAsText(file);
+                // Reset input so the same file can be selected again if needed
+                event.target.value = '';
+            };
+
+            const categoriesMath = [
+                { id: 'ALL', label: 'Bunter Mix', icon: <Layers className="w-5 h-5"/>, color: 'bg-purple-500' },
+                { id: 'EXPAND', label: 'Erweitern', icon: <ArrowRightLeft className="w-5 h-5"/>, color: 'bg-blue-500' },
+                { id: 'SIMPLIFY', label: 'Kürzen', icon: <Scissors className="w-5 h-5"/>, color: 'bg-green-500' },
+                { id: 'EXPAND_SIMPLIFY', label: 'Mix: Erw & Kür', icon: <Briefcase className="w-5 h-5"/>, color: 'bg-teal-500' },
+                { id: 'ADD_SUB', label: 'Plus & Minus', icon: <Calculator className="w-5 h-5"/>, color: 'bg-orange-500' },
+                { id: 'ADD_SUB_PRO', label: 'Plus & Minus PRO', icon: <Zap className="w-5 h-5"/>, color: 'bg-red-600' },
+                { id: 'MULTIPLY', label: 'Multiplizieren', icon: <X className="w-5 h-5"/>, color: 'bg-yellow-500' },
+            ];
+
+            const categoriesGerman = [
+                { id: 'DE_WORTARTEN', label: 'Wortarten', icon: <BookOpen className="w-5 h-5"/>, color: 'bg-blue-600' },
+                { id: 'DE_PERFEKT', label: 'Perfekt', icon: <Clock className="w-5 h-5"/>, color: 'bg-amber-600' },
+                { id: 'DE_PRAETERITUM', label: 'Präteritum', icon: <Clock className="w-5 h-5"/>, color: 'bg-amber-700' },
+                { id: 'DE_FUTUR', label: 'Futur', icon: <Zap className="w-5 h-5"/>, color: 'bg-cyan-600' },
+                { id: 'DE_MIXED', label: 'Zeiten-Mix', icon: <Layers className="w-5 h-5"/>, color: 'bg-purple-600' },
+                { id: 'DE_DEINE_MUTTER', label: 'Deine Mutter', icon: <Smile className="w-5 h-5"/>, color: 'bg-pink-600' },
+            ];
+
+            const currentCategories = selectedSubject === 'MATH' ? categoriesMath : categoriesGerman;
+
+            return (
+                <div className="flex flex-col items-center justify-center min-h-screen bg-slate-900 p-4 md:p-8">
+                    <div className="glass-panel p-6 md:p-8 rounded-3xl max-w-5xl w-full text-center relative overflow-hidden flex flex-col h-full max-h-[95vh]">
+                        {/* Background blobs */}
+                        <div className="absolute top-0 left-0 w-32 h-32 bg-purple-500 rounded-full mix-blend-multiply filter blur-xl opacity-20 animate-blob"></div>
+                        <div className="absolute top-0 right-0 w-32 h-32 bg-yellow-500 rounded-full mix-blend-multiply filter blur-xl opacity-20 animate-blob animation-delay-2000"></div>
+
+                        <div className="shrink-0 mb-4 flex justify-between items-end">
+                            <div className="text-left">
+                                <h1 className="text-3xl md:text-5xl font-black mb-2 text-transparent bg-clip-text bg-gradient-to-r from-pink-500 via-red-500 to-yellow-500">
+                                    MONSTER KLASSENKAMPF
+                                </h1>
+                                <p className="text-slate-300 text-lg game-font">Cloud Edition</p>
+                            </div>
+                            <div className="flex gap-2">
+                                <button onClick={() => setIsSettingsOpen(true)} className="bg-slate-800 hover:bg-slate-700 text-slate-300 p-2 rounded-xl transition-colors border border-white/10 shadow-lg">
+                                    <Settings className="w-6 h-6" />
+                                </button>
+                                <button onClick={() => setShowHighscores(true)} className="bg-yellow-500/20 hover:bg-yellow-500/40 text-yellow-400 p-2 rounded-xl transition-colors border border-yellow-500/50">
+                                    <Trophy className="w-6 h-6" />
+                                </button>
+                            </div>
+                        </div>
+
+                        <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar flex flex-col gap-6">
+                            
+                            {/* TEAM SETUP */}
+                            <div className="bg-slate-800/40 rounded-2xl p-4 border border-white/5">
+                                <div className="flex justify-between items-center mb-4">
+                                    <h2 className="text-left text-slate-400 font-bold uppercase tracking-widest text-sm flex items-center gap-2">
+                                        <User className="w-4 h-4"/> 1. Teams aufstellen
+                                    </h2>
+                                    <div className="flex gap-2">
+                                        <button onClick={() => setIsSettingsOpen(true)} className="text-xs bg-slate-700 hover:bg-blue-600 px-3 py-1 rounded flex items-center gap-1 transition-colors">
+                                            <DownloadCloud className="w-3 h-3"/> Laden
+                                        </button>
+                                        <button onClick={saveCurrentSetup} className="text-xs bg-slate-700 hover:bg-green-600 px-3 py-1 rounded flex items-center gap-1 transition-colors">
+                                            <UploadCloud className="w-3 h-3"/> Sichern
+                                        </button>
+                                    </div>
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                                    {names.map((name, index) => {
+                                        const config = TEAM_CONFIGS[index % TEAM_CONFIGS.length];
+                                        return (
+                                            <div key={index} className="flex items-center gap-3 animate-in fade-in slide-in-from-bottom-4 duration-500 bg-slate-800/80 p-2 rounded-xl border border-white/5">
+                                                <div className={`w-8 h-8 shrink-0 rounded-lg flex items-center justify-center ${config.color} shadow-lg text-white`}>
+                                                    <span className="font-bold text-lg">{index + 1}</span>
+                                                </div>
+                                                <input
+                                                    id={`team-input-${index}`}
+                                                    type="text"
+                                                    placeholder={`Team ${index + 1}`}
+                                                    value={name}
+                                                    onChange={(e) => updateName(index, e.target.value)}
+                                                    onKeyDown={(e) => {
+                                                        if (e.key === 'Enter') {
+                                                            e.preventDefault();
+                                                            if (index < names.length - 1) {
+                                                                document.getElementById(`team-input-${index + 1}`)?.focus();
+                                                            } else if (names.length < MAX_TEAMS) {
+                                                                addTeam();
+                                                                setTimeout(() => {
+                                                                    document.getElementById(`team-input-${index + 1}`)?.focus();
+                                                                }, 10);
+                                                            }
+                                                        }
+                                                    }}
+                                                    className="flex-1 w-full bg-slate-900 border border-slate-700 rounded-md py-1.5 px-2 text-base focus:border-purple-500 focus:outline-none text-white font-bold"
+                                                />
+                                                {names.length > 1 && (
+                                                    <button onClick={() => removeTeam(index)} className="p-1.5 rounded-md bg-slate-900 hover:bg-red-500/20 text-slate-400 hover:text-red-500">
+                                                        <X className="w-4 h-4" />
+                                                    </button>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
+                                    {names.length < MAX_TEAMS && (
+                                        <button onClick={addTeam} className="flex items-center justify-center gap-2 p-3 rounded-xl border-2 border-dashed border-slate-600 text-slate-400 hover:border-purple-500 hover:text-purple-400 font-bold h-[56px]">
+                                            <Plus className="w-5 h-5" /> Hinzufügen
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* MISSION CONTROL */}
+                            <div className="bg-slate-800/40 rounded-2xl p-4 border border-white/5">
+                                <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-4">
+                                    <h2 className="text-left text-slate-400 font-bold uppercase tracking-widest text-sm flex items-center gap-2">
+                                        <Briefcase className="w-4 h-4"/> 2. Mission wählen
+                                    </h2>
+                                    <div className="flex gap-2 bg-slate-900 p-1 rounded-lg border border-slate-700">
+                                        <button onClick={() => handleSubjectChange('MATH')} className={`px-4 py-1.5 rounded-md text-sm font-bold transition-all flex items-center gap-2 ${selectedSubject === 'MATH' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'}`}>
+                                            <Calculator className="w-4 h-4"/> Mathe
+                                        </button>
+                                        <button onClick={() => handleSubjectChange('GERMAN')} className={`px-4 py-1.5 rounded-md text-sm font-bold transition-all flex items-center gap-2 ${selectedSubject === 'GERMAN' ? 'bg-amber-600 text-white' : 'text-slate-400 hover:text-white'}`}>
+                                            <AlignLeft className="w-4 h-4"/> Deutsch
+                                        </button>
+                                    </div>
+                                    <div className="flex gap-2 ml-auto md:ml-0">
+                                        <button onClick={() => setIsPromptGeneratorOpen(true)} className="bg-purple-600 hover:bg-purple-500 text-xs px-3 py-1 rounded-full flex items-center gap-2 transition-colors border border-white/10">
+                                            <Sparkles className="w-3 h-3"/> KI-Mission generieren
+                                        </button>
+                                        <button onClick={() => {
+                                            setEditorMissionName(selectedMissionName || 'Standard');
+                                            setDraftQuestions(customQuestions.filter(q => (q.missionName || 'Standard') === (selectedMissionName || 'Standard')));
+                                            setHasUnsavedChanges(false);
+                                            setIsEditorOpen(true);
+                                        }} className="bg-slate-700 hover:bg-slate-600 text-xs px-3 py-1 rounded-full flex items-center gap-2 transition-colors border border-white/10">
+                                            <Edit3 className="w-3 h-3"/> Aufgaben-Editor ({customQuestions.length})
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-8 gap-3">
+                                    {currentCategories.map((cat) => (
+                                        <button key={cat.id} onClick={() => { SoundService.playClick(); setSelectedCategory(cat.id); }}
+                                            className={`relative flex flex-col items-center justify-center p-3 rounded-xl border-2 transition-all duration-200 ${selectedCategory === cat.id ? `${cat.color} border-white text-white shadow-lg scale-105` : 'bg-slate-900 border-slate-700 text-slate-400 hover:border-slate-500 hover:bg-slate-800'}`}>
+                                            <div className="mb-1 p-2 bg-white/10 rounded-full">{cat.icon}</div>
+                                            <span className="text-[10px] md:text-xs font-bold leading-tight text-center">{cat.label}</span>
+                                        </button>
+                                    ))}
+                                    <button onClick={() => { SoundService.playClick(); setSelectedCategory('CUSTOM'); if(customMissionsList.length > 0 && !customMissionsList.includes(selectedMissionName)) setSelectedMissionName(customMissionsList[0]); }}
+                                        className={`relative flex flex-col items-center justify-center p-3 rounded-xl border-2 transition-all duration-200 ${selectedCategory === 'CUSTOM' ? `bg-pink-500 border-white text-white shadow-lg scale-105` : 'bg-slate-900 border-slate-700 text-slate-400 hover:border-slate-500 hover:bg-slate-800'}`}>
+                                        <div className="mb-1 p-2 bg-white/10 rounded-full"><PenTool className="w-5 h-5"/></div>
+                                        <span className="text-[10px] md:text-xs font-bold leading-tight">Eigene</span>
+                                        {customQuestions.length === 0 && selectedCategory !== 'CUSTOM' && (
+                                            <span className="absolute -top-1 -right-1 flex h-3 w-3">
+                                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                                                <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
+                                            </span>
+                                        )}
+                                    </button>
+                                </div>
+
+                                {selectedCategory === 'CUSTOM' && customMissionsList.length > 0 && (
+                                    <div className="mt-4 p-4 bg-slate-900 rounded-xl border border-pink-500/30">
+                                        <h3 className="text-sm font-bold text-pink-400 mb-2">Welche eigene Mission?</h3>
+                                        <div className="flex flex-wrap gap-2">
+                                            {customMissionsList.map(mName => (
+                                                <button 
+                                                    key={mName}
+                                                    onClick={() => setSelectedMissionName(mName)}
+                                                    className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${selectedMissionName === mName ? 'bg-pink-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}
+                                                >
+                                                    {mName} ({customQuestions.filter(q => (q.missionName || 'Standard') === mName).length})
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+
+                        <div className="shrink-0 mt-4 pt-4 border-t border-white/10">
+                            <button onClick={handleStart} disabled={!canStart || (selectedCategory === 'CUSTOM' && customQuestions.filter(q => (q.missionName || 'Standard') === selectedMissionName).length === 0)}
+                                className={`w-full py-4 rounded-2xl text-2xl font-black shadow-lg transform transition-all ${canStart && (selectedCategory !== 'CUSTOM' || customQuestions.filter(q => (q.missionName || 'Standard') === selectedMissionName).length > 0) ? 'bg-gradient-to-r from-green-500 to-emerald-600 hover:scale-[1.02] hover:shadow-green-500/50 cursor-pointer' : 'bg-slate-700 text-slate-500 cursor-not-allowed opacity-50'}`}>
+                                <span className="flex items-center justify-center gap-3">
+                                    {(selectedCategory === 'CUSTOM' && customQuestions.filter(q => (q.missionName || 'Standard') === selectedMissionName).length === 0) ? 'KEINE AUFGABEN' : 'MISSION STARTEN'}
+                                    <Play className="w-6 h-6 fill-current" />
+                                </span>
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* MODAL: PROMPT GENERATOR */}
+                    {isPromptGeneratorOpen && (
+                        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in">
+                            <div className="glass-panel w-full max-w-4xl bg-slate-900 rounded-3xl overflow-hidden flex flex-col max-h-[90vh]">
+                                <div className="bg-slate-800 p-4 border-b border-white/10 flex justify-between items-center">
+                                    <h2 className="text-xl font-bold flex items-center gap-2"><Sparkles className="w-5 h-5 text-purple-400"/> KI-Missions-Generator</h2>
+                                    <button onClick={() => setIsPromptGeneratorOpen(false)} className="p-2 hover:bg-red-500/20 rounded-full"><X/></button>
+                                </div>
+                                <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                        {/* Left Column: Input */}
+                                        <div className="space-y-4">
+                                            <h3 className="text-lg font-bold text-purple-400 mb-2">1. Mission definieren</h3>
+                                            <div className="grid grid-cols-2 gap-4">
+                                                <div>
+                                                    <label className="text-xs text-slate-400 block mb-1">Fach</label>
+                                                    <input className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white" placeholder="z.B. Englisch" value={promptData.subject} onChange={e => setPromptData({...promptData, subject: e.target.value})} />
+                                                </div>
+                                                <div>
+                                                    <label className="text-xs text-slate-400 block mb-1">Klasse</label>
+                                                    <input className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white" placeholder="z.B. 7. Klasse" value={promptData.grade} onChange={e => setPromptData({...promptData, grade: e.target.value})} />
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <label className="text-xs text-slate-400 block mb-1">Thema</label>
+                                                <input className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white" placeholder="z.B. Present Perfect" value={promptData.topic} onChange={e => setPromptData({...promptData, topic: e.target.value})} />
+                                            </div>
+                                            <div>
+                                                <label className="text-xs text-slate-400 block mb-1">Anzahl der Fragen</label>
+                                                <input type="number" className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white" value={promptData.count} onChange={e => setPromptData({...promptData, count: e.target.value})} min="1" max="100" />
+                                            </div>
+                                            <div>
+                                                <label className="text-xs text-slate-400 block mb-1">Zusätzlicher Text / Vokabeln (Optional)</label>
+                                                <textarea className="w-full h-24 bg-slate-800 border border-slate-600 rounded p-2 text-white text-sm" placeholder="Füge hier Vokabeln, Texte oder spezielle Anweisungen ein..." value={promptData.additionalText} onChange={e => setPromptData({...promptData, additionalText: e.target.value})} />
+                                            </div>
+                                            <button 
+                                                onClick={() => {
+                                                    const mName = promptData.topic || 'Meine Mission';
+                                                    const prompt = `Erstelle Quizfragen für ein Lernspiel.\nFach: ${promptData.subject || 'Allgemein'}\nThema: ${promptData.topic || 'Allgemein'}\nKlasse/Zielgruppe: ${promptData.grade || 'Alle'}\nAnzahl der Fragen: ${promptData.count}\n\n${promptData.additionalText ? `Bitte beachte folgende zusätzliche Informationen/Inhalte:\n${promptData.additionalText}\n\n` : ''}Gib das Ergebnis AUSSCHLIESSLICH als valides JSON-Array aus. Verwende keine Markdown-Blöcke (wie \`\`\`json) um das Ergebnis herum, sondern gib nur den reinen JSON-Code zurück.\n\nJedes Objekt im Array muss exakt diese Struktur haben:\n\n{\n  "text": "Die eigentliche Fragestellung (z.B. 'Berechne das Ergebnis:' oder 'Bestimme die Wortart:')",\n  "expression": "Die Aufgabe oder der Satz",\n  "options": ["Antwort A", "Antwort B", "Antwort C", "Antwort D"],\n  "correctIndex": 0,\n  "difficulty": "medium",\n  "missionName": "${mName}"\n}\n\nWICHTIGE REGELN FÜR DIE FORMATIERUNG:\n1. "options": Es müssen immer exakt 4 Antwortmöglichkeiten sein (Strings).\n2. "correctIndex": Eine Zahl von 0 bis 3, die angibt, welche der 4 Optionen die richtige ist (0 = erste Option, 3 = vierte Option).\n3. "difficulty": Muss entweder "easy", "medium" oder "hard" sein.\n4. "missionName": Verwende für alle ${promptData.count} Fragen denselben Missionsnamen ("${mName}").\n5. "expression" (Formatierung für Brüche): Wenn es um Brüche geht, schreibe sie im Format "Zähler/Nenner" (z.B. "1/2" oder "3/4"). Gemischte Brüche schreibst du mit Leerzeichen (z.B. "1 1/2"). Das Spiel wandelt diese Schreibweise automatisch in echte, grafische Brüche um!\n6. "expression" (Formatierung für Text/Deutsch): Wenn ein bestimmtes Wort in einem Satz hervorgehoben/unterstrichen werden soll, setze es in Unterstriche (z.B. "Das _Haus_ ist groß.").\n\nBitte achte darauf, dass die falschen Antworten (Distraktoren) typische Schülerfehler widerspiegeln und plausibel sind. Mische die Position der richtigen Antwort (correctIndex) gut durch.`;
+                                                    setGeneratedPrompt(prompt);
+                                                }}
+                                                className="w-full bg-purple-600 hover:bg-purple-500 text-white font-bold py-3 rounded-xl transition-colors"
+                                            >
+                                                Prompt generieren
+                                            </button>
+                                        </div>
+
+                                        {/* Right Column: Output & Import */}
+                                        <div className="space-y-6">
+                                            <div className="space-y-4">
+                                                <h3 className="text-lg font-bold text-blue-400 mb-2">2. KI befragen</h3>
+                                                <textarea 
+                                                    className="w-full h-32 bg-black/50 font-mono text-xs text-slate-300 p-2 rounded border border-slate-700"
+                                                    readOnly
+                                                    value={generatedPrompt}
+                                                    placeholder="Dein Prompt erscheint hier..."
+                                                />
+                                                <div className="flex gap-2">
+                                                    <button 
+                                                        onClick={() => navigator.clipboard.writeText(generatedPrompt)}
+                                                        disabled={!generatedPrompt}
+                                                        className="flex-1 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 py-2 rounded text-xs font-bold flex items-center justify-center gap-1"
+                                                    >
+                                                        <Copy className="w-4 h-4"/> Prompt kopieren
+                                                    </button>
+                                                    <a href="https://chatgpt.com" target="_blank" rel="noreferrer" className="flex-1 bg-[#10a37f] hover:bg-[#0e906f] py-2 rounded text-xs font-bold flex items-center justify-center gap-1 text-white">
+                                                        ChatGPT öffnen
+                                                    </a>
+                                                    <a href="https://gemini.google.com" target="_blank" rel="noreferrer" className="flex-1 bg-[#4285f4] hover:bg-[#3367d6] py-2 rounded text-xs font-bold flex items-center justify-center gap-1 text-white">
+                                                        Gemini öffnen
+                                                    </a>
+                                                </div>
+                                            </div>
+
+                                            <div className="space-y-4 pt-4 border-t border-white/10">
+                                                <h3 className="text-lg font-bold text-green-400 mb-2">3. JSON importieren</h3>
+                                                <textarea 
+                                                    className="w-full h-32 bg-black/50 font-mono text-xs text-green-400 p-2 rounded border border-slate-700"
+                                                    value={aiJsonImport}
+                                                    onChange={e => {
+                                                        setAiJsonImport(e.target.value);
+                                                        // Try auto-import
+                                                        try {
+                                                            const parsed = parseFlexibleJson(e.target.value);
+                                                            if (Array.isArray(parsed)) {
+                                                                const valid = parsed.every(q => q.text && Array.isArray(q.options) && typeof q.correctIndex === 'number');
+                                                                if (valid) {
+                                                                    const mName = promptData.topic || 'KI Mission';
+                                                                    const newSet = parsed.map(q => ({...q, category: 'CUSTOM', id: q.id || Math.random().toString(), missionName: mName}));
+                                                                    
+                                                                    // Ask if they want to add to current draft or save directly
+                                                                    if (confirm(`Erfolgreich ${newSet.length} Fragen erkannt! Möchtest du sie direkt als neue Mission "${mName}" speichern?`)) {
+                                                                        const updatedQuestions = [...customQuestions, ...newSet];
+                                                                        setCustomQuestions(updatedQuestions);
+                                                                        CloudService.saveCustomQuestions(updatedQuestions);
+                                                                        alert(`Mission "${mName}" wurde gespeichert!`);
+                                                                        setAiJsonImport('');
+                                                                        setIsPromptGeneratorOpen(false);
+                                                                    }
+                                                                }
+                                                            }
+                                                        } catch (err) {
+                                                            // Ignore parsing errors during typing
+                                                        }
+                                                    }}
+                                                    placeholder="Füge hier die JSON-Antwort der KI ein..."
+                                                />
+                                                <button 
+                                                    onClick={() => {
+                                                        try {
+                                                            const parsed = parseFlexibleJson(aiJsonImport);
+                                                            if (Array.isArray(parsed)) {
+                                                                const valid = parsed.every(q => q.text && Array.isArray(q.options) && typeof q.correctIndex === 'number');
+                                                                if (valid) {
+                                                                    const mName = promptData.topic || 'KI Mission';
+                                                                    const newSet = parsed.map(q => ({...q, category: 'CUSTOM', id: q.id || Math.random().toString(), missionName: mName}));
+                                                                    const updatedQuestions = [...customQuestions, ...newSet];
+                                                                    setCustomQuestions(updatedQuestions);
+                                                                    CloudService.saveCustomQuestions(updatedQuestions);
+                                                                    alert(`Mission "${mName}" wurde erfolgreich importiert!`);
+                                                                    setAiJsonImport('');
+                                                                    setIsPromptGeneratorOpen(false);
+                                                                } else {
+                                                                    alert("Format ungültig. Array von Fragen erwartet.");
+                                                                }
+                                                            }
+                                                        } catch (e) {
+                                                            alert("Ungültiges JSON. Bitte überprüfe das Format.");
+                                                        }
+                                                    }}
+                                                    className="w-full bg-green-600 hover:bg-green-500 text-white font-bold py-3 rounded-xl transition-colors flex items-center justify-center gap-2"
+                                                >
+                                                    <Download className="w-5 h-5"/> JSON manuell importieren
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* MODAL: EDITOR */}
+                    {isEditorOpen && (
+                        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in">
+                            <div className="glass-panel w-full max-w-4xl bg-slate-900 rounded-3xl overflow-hidden flex flex-col max-h-[90vh]">
+                                <div className="bg-slate-800 p-4 border-b border-white/10 flex justify-between items-center">
+                                    <h2 className="text-xl font-bold flex items-center gap-2"><PenTool className="w-5 h-5"/> Aufgaben-Editor</h2>
+                                    <button onClick={handleCloseEditor} className="p-2 hover:bg-red-500/20 rounded-full"><X/></button>
+                                </div>
+                                <div className="flex-1 overflow-hidden flex flex-col md:flex-row">
+                                    <div className="w-full md:w-1/2 p-6 overflow-y-auto border-r border-white/10">
+                                        <div className="space-y-4">
+                                            <div className="mb-4 flex flex-col gap-2">
+                                                <div className="flex gap-2">
+                                                    <button onClick={handleNewMission} className="flex-1 bg-slate-700 hover:bg-slate-600 text-white text-xs font-bold py-2 rounded">
+                                                        <Plus className="w-4 h-4 inline-block mr-1"/> Neue Mission
+                                                    </button>
+                                                    <select 
+                                                        className="flex-1 bg-slate-700 border-none text-white text-xs font-bold py-2 rounded px-2 outline-none"
+                                                        value={editorMissionName}
+                                                        onChange={handleSelectMissionToEdit}
+                                                    >
+                                                        <option value="" disabled>Mission laden...</option>
+                                                        {customMissionsList.map(m => <option key={m} value={m}>{m}</option>)}
+                                                    </select>
+                                                </div>
+                                                <div className="flex gap-2 items-center">
+                                                    <input 
+                                                        className="flex-1 bg-slate-800 border border-slate-600 rounded p-2 text-white font-bold" 
+                                                        placeholder="Name der Mission (z.B. Brüche Test 1)" 
+                                                        value={editorMissionName} 
+                                                        onChange={e => { setEditorMissionName(e.target.value); setHasUnsavedChanges(true); }} 
+                                                    />
+                                                    <button onClick={saveDraftMission} className={`px-4 py-2 rounded font-bold text-sm transition-colors ${hasUnsavedChanges ? 'bg-green-500 hover:bg-green-400 text-white' : 'bg-slate-700 text-slate-400'}`}>
+                                                        Speichern
+                                                    </button>
+                                                    {customMissionsList.includes(editorMissionName) && (
+                                                        <button onClick={handleDeleteMission} className="px-3 py-2 rounded font-bold text-sm transition-colors bg-red-600 hover:bg-red-500 text-white" title="Mission löschen">
+                                                            <Trash className="w-4 h-4" />
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            </div>
+                                            <input className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white" placeholder="Frage..." value={editQ.text} onChange={e => setEditQ({...editQ, text: e.target.value})} />
+                                            <input className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white font-mono" placeholder="Mathe/Formatierung (Optional)" value={editQ.expression} onChange={e => setEditQ({...editQ, expression: e.target.value})} />
+                                            <div className="grid grid-cols-2 gap-2">
+                                                {[0,1,2,3].map(i => (
+                                                    <div key={i}>
+                                                        <label className="text-xs text-slate-500 block mb-1 flex justify-between">Opt {i+1} <input type="radio" name="correct" checked={editQ.correctIndex===i} onChange={()=>setEditQ({...editQ, correctIndex:i})} className="accent-green-500"/></label>
+                                                        <input className={`w-full border rounded p-2 text-sm text-white ${editQ.correctIndex===i ? 'border-green-500 bg-green-900/20' : 'border-slate-600 bg-slate-800'}`} value={editQ.options[i]} onChange={e=>{const n=[...editQ.options];n[i]=e.target.value;setEditQ({...editQ, options:n})}}/>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                            <div className="flex gap-2">
+                                                <button onClick={addDraftQuestion} className="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded-xl flex justify-center gap-2">
+                                                    {editQ.id ? <><Edit3 className="w-5 h-5"/> Frage aktualisieren</> : <><Plus className="w-5 h-5"/> Frage hinzufügen</>}
+                                                </button>
+                                                {editQ.id && (
+                                                    <button onClick={cancelEditQuestion} className="bg-slate-700 hover:bg-slate-600 text-white font-bold py-3 px-4 rounded-xl flex justify-center gap-2">
+                                                        <X className="w-5 h-5"/>
+                                                    </button>
+                                                )}
+                                            </div>
+                                            
+                                            {/* JSON IMPORT */}
+                                            <div className="mt-8 pt-6 border-t border-white/10">
+                                              <h3 className="text-xs font-bold uppercase text-slate-400 mb-2">Import / Export (JSON)</h3>
+                                              <details className="mb-2 text-[10px] text-slate-500 cursor-pointer">
+                                                  <summary className="hover:text-slate-300">Format-Hilfe & Beispiel anzeigen</summary>
+                                                  <pre className="bg-black/40 p-2 rounded mt-1 overflow-x-auto text-green-400 font-mono">
+{`[
+  {
+    "text": "Frage?",
+    "expression": "Ich sehe ein _Haus_",
+    "options": ["A", "B", "C", "D"],
+    "correctIndex": 0,
+    "difficulty": "easy"
+  }
+]`}
+                                                  </pre>
+                                              </details>
+                                              <textarea 
+                                                 className="w-full h-24 bg-black/50 font-mono text-xs text-green-400 p-2 rounded border border-slate-700"
+                                                 value={jsonImport}
+                                                 onChange={e => setJsonImport(e.target.value)}
+                                                 placeholder="JSON hier einfügen..."
+                                              />
+                                              <div className="flex gap-2 mt-2">
+                                                 <button onClick={handleJsonImport} className="flex-1 bg-slate-700 hover:bg-slate-600 py-2 rounded text-xs font-bold flex items-center justify-center gap-1">
+                                                    <Upload className="w-3 h-3"/> Text Importieren
+                                                 </button>
+                                                 <label className="flex-1 bg-blue-600 hover:bg-blue-500 py-2 rounded text-xs font-bold flex items-center justify-center gap-1 cursor-pointer">
+                                                    <UploadCloud className="w-3 h-3"/> Datei hochladen
+                                                    <input type="file" accept=".json" className="hidden" onChange={handleFileUpload} />
+                                                 </label>
+                                              </div>
+                                              <div className="flex gap-2 mt-2">
+                                                 <button 
+                                                   onClick={() => navigator.clipboard.writeText(JSON.stringify(draftQuestions))}
+                                                   className="w-full bg-slate-700 hover:bg-slate-600 py-2 rounded text-xs font-bold flex items-center justify-center gap-1"
+                                                 >
+                                                    <Download className="w-3 h-3"/> JSON Kopieren (Aktuelle Mission)
+                                                 </button>
+                                              </div>
+                                           </div>
+                                        </div>
+                                    </div>
+                                    <div className="w-full md:w-1/2 p-6 overflow-y-auto bg-black/20">
+                                        <h3 className="text-sm font-bold uppercase text-slate-400 mb-4">Liste ({draftQuestions.length})</h3>
+                                        <div className="space-y-3">
+                                            {draftQuestions.map((q,idx) => (
+                                                <div key={q.id||idx} className="bg-slate-800 p-3 rounded-lg border border-slate-700 flex justify-between cursor-pointer hover:border-blue-500 transition-colors" onClick={() => handleEditQuestion(q)}>
+                                                    <div>
+                                                        <div className="font-bold text-sm">{q.text}</div>
+                                                        <div className="text-xs text-slate-500">Lösung: {q.options[q.correctIndex]}</div>
+                                                    </div>
+                                                    <button onClick={(e) => { e.stopPropagation(); removeDraftQuestion(q.id); }} className="text-slate-600 hover:text-red-500"><Trash className="w-4 h-4"/></button>
+                                                </div>
+                                            ))}
+                                            {draftQuestions.length === 0 && (
+                                                <div className="text-center text-slate-500 text-sm py-4">Keine Fragen in dieser Mission.</div>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* MODAL: SETTINGS & TEAMS */}
+                    {isSettingsOpen && (
+                        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
+                            <div className="glass-panel w-full max-w-2xl bg-slate-900 rounded-3xl overflow-hidden flex flex-col max-h-[80vh]">
+                                <div className="bg-slate-800 p-4 border-b border-white/10 flex justify-between items-center">
+                                    <h2 className="text-xl font-bold flex items-center gap-2"><Settings className="w-5 h-5 text-blue-400"/> Einstellungen & Klassen</h2>
+                                    <button onClick={() => setIsSettingsOpen(false)} className="p-2 hover:bg-red-500/20 rounded-full transition-colors"><X/></button>
+                                </div>
+                                
+                                <div className="p-6 overflow-y-auto custom-scrollbar">
+                                    <h3 className="text-sm font-bold uppercase text-slate-400 mb-4 flex items-center gap-2">
+                                        <Users className="w-4 h-4" /> Gespeicherte Klassen ({savedTeamSets.length})
+                                    </h3>
+                                    
+                                    {savedTeamSets.length === 0 ? (
+                                        <div className="text-center py-8 bg-black/20 rounded-xl border border-white/5">
+                                            <Users className="w-12 h-12 text-slate-600 mx-auto mb-3" />
+                                            <p className="text-slate-400">Noch keine Klassen gespeichert.</p>
+                                            <p className="text-xs text-slate-500 mt-1">Erstelle Teams und klicke auf "Sichern".</p>
+                                        </div>
+                                    ) : (
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                            {savedTeamSets.map(set => (
+                                                <div key={set.id} className="bg-slate-800 border border-white/10 rounded-xl p-4 flex flex-col gap-3 hover:border-blue-500/50 transition-colors">
+                                                    <div className="flex justify-between items-start">
+                                                        <h4 className="font-bold text-lg text-white">{set.name}</h4>
+                                                        <span className="text-xs font-bold bg-slate-900 px-2 py-1 rounded-md text-slate-400">
+                                                            {set.teams.length} Teams
+                                                        </span>
+                                                    </div>
+                                                    
+                                                    <div className="flex flex-wrap gap-1">
+                                                        {set.teams.map((teamName, idx) => (
+                                                            <span key={idx} className="text-[10px] bg-slate-700 px-1.5 py-0.5 rounded text-slate-300">
+                                                                {teamName}
+                                                            </span>
+                                                        ))}
+                                                    </div>
+
+                                                    <div className="flex gap-2 mt-2 pt-3 border-t border-white/5">
+                                                        <button 
+                                                            onClick={() => loadTeamSet(set)}
+                                                            className="flex-1 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold py-2 rounded-lg transition-colors flex items-center justify-center gap-1"
+                                                        >
+                                                            <DownloadCloud className="w-3 h-3" /> Laden
+                                                        </button>
+                                                        <button 
+                                                            onClick={() => deleteTeamSet(set.id)}
+                                                            className="bg-slate-700 hover:bg-red-600 text-slate-300 hover:text-white p-2 rounded-lg transition-colors"
+                                                            title="Löschen"
+                                                        >
+                                                            <Trash className="w-4 h-4" />
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* MODAL: HIGHSCORES */}
+                    {showHighscores && (
+                        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in">
+                            <div className="glass-panel w-full max-w-lg bg-slate-900 rounded-3xl overflow-hidden flex flex-col max-h-[80vh]">
+                                <div className="bg-slate-800 p-4 border-b border-white/10 flex justify-between items-center">
+                                    <h2 className="text-xl font-bold flex items-center gap-2"><Trophy className="w-5 h-5 text-yellow-400"/> Bestenliste</h2>
+                                    <button onClick={() => setShowHighscores(false)} className="p-2 hover:bg-red-500/20 rounded-full"><X/></button>
+                                </div>
+                                <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
+                                    {highscores.length === 0 ? (
+                                        <p className="text-center text-slate-500 py-10">Noch keine Einträge.</p>
+                                    ) : (
+                                        <table className="w-full text-left">
+                                            <thead>
+                                                <tr className="text-slate-400 text-xs uppercase border-b border-white/10">
+                                                    <th className="pb-2">#</th>
+                                                    <th className="pb-2">Team</th>
+                                                    <th className="pb-2 text-right">Score</th>
+                                                    <th className="pb-2 text-right">Datum</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {highscores.map((h, i) => (
+                                                    <tr key={i} className="border-b border-white/5 last:border-0 hover:bg-white/5">
+                                                        <td className="py-3 font-bold text-slate-500">{i+1}</td>
+                                                        <td className="py-3 font-bold text-white">{h.name}</td>
+                                                        <td className="py-3 text-right font-mono text-yellow-400">{h.score}</td>
+                                                        <td className="py-3 text-right text-xs text-slate-500">{new Date(h.date).toLocaleDateString()}</td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        // --- Whiteboard Component (Erklärmonster) ---
+        const Whiteboard = ({ question, onClose }) => {
+            const canvasRef = useRef(null);
+            const [isDrawing, setIsDrawing] = useState(false);
+            const [isClosing, setIsClosing] = useState(false);
+            const [color, setColor] = useState('#0f172a');
+
+            // Interactive Word Connection State
+            const isWordMode = question.category === 'DE_WORTARTEN';
+            const [selectedWordIndex, setSelectedWordIndex] = useState(null);
+            const [connections, setConnections] = useState([]); // { wordIndex, optionIndex, isCorrect }
+            const wordRefs = useRef([]);
+            const optionRefs = useRef([]);
+            const [lineCoords, setLineCoords] = useState([]);
+
+            const getWordType = (word) => {
+                const cleanWord = word.replace(/[^a-zA-ZäöüÄÖÜß]/g, '');
+                const lowerWord = cleanWord.toLowerCase();
+                
+                const artikel = ['der', 'die', 'das', 'ein', 'eine', 'einen', 'einem', 'einer', 'den', 'dem', 'des', 'im', 'am', 'zum', 'zur'];
+                const pronomen = ['ich', 'du', 'er', 'sie', 'es', 'wir', 'ihr', 'mich', 'dich', 'sich', 'uns', 'euch', 'mein', 'dein', 'sein', 'unser', 'euer'];
+                const praeposition = ['in', 'auf', 'unter', 'über', 'vor', 'hinter', 'neben', 'an', 'zwischen', 'zu', 'von', 'mit', 'bei', 'seit', 'nach', 'aus', 'für', 'gegen', 'ohne', 'um', 'durch'];
+                
+                if (artikel.includes(lowerWord)) return 'Artikel';
+                if (pronomen.includes(lowerWord)) return 'Pronomen';
+                if (praeposition.includes(lowerWord)) return 'Präposition';
+                
+                const verbs = ['kostet', 'lacht', 'ist', 'scheint', 'bellt', 'singt', 'essen', 'rennt', 'schläft', 'liest', 'spielt', 'mag', 'singen', 'war', 'blüht', 'tanzt', 'gehen', 'schreibt', 'spielen', 'fährt', 'fliegt', 'lernen', 'miaut', 'wächst', 'tickt', 'malt', 'weint', 'duftet'];
+                if (verbs.includes(lowerWord)) return 'Verb';
+                
+                const adjs = ['rot', 'neu', 'hell', 'laut', 'schnell', 'hoch', 'groß', 'blau', 'spannend', 'rund', 'kalt', 'süß', 'schwer', 'klein', 'lecker', 'schön', 'tief', 'lang', 'fröhlich', 'weich', 'bequem', 'heiß', 'offen', 'dunkel', 'salzig', 'bunt', 'stark', 'sehr', 'gerne', 'traurig', 'zu'];
+                if (adjs.includes(lowerWord)) return 'Adjektiv';
+                
+                if (cleanWord.length > 0 && cleanWord[0] === cleanWord[0].toUpperCase()) {
+                    return 'Nomen';
+                }
+                
+                return 'Unbekannt';
+            };
+
+            const updateLines = () => {
+                if (!isWordMode) return;
+                const container = canvasRef.current?.parentElement;
+                if (!container) return;
+                const containerRect = container.getBoundingClientRect();
+
+                const newCoords = connections.map(conn => {
+                    const wRef = wordRefs.current[conn.wordIndex];
+                    const oRef = optionRefs.current[conn.optionIndex];
+                    if (wRef && oRef) {
+                        const wRect = wRef.getBoundingClientRect();
+                        const oRect = oRef.getBoundingClientRect();
+                        return {
+                            x1: wRect.left - containerRect.left + wRect.width / 2,
+                            y1: wRect.bottom - containerRect.top,
+                            x2: oRect.left - containerRect.left + oRect.width / 2,
+                            y2: oRect.top - containerRect.top,
+                            isCorrect: conn.isCorrect
+                        };
+                    }
+                    return null;
+                }).filter(Boolean);
+                setLineCoords(newCoords);
+            };
+
+            useEffect(() => {
+                updateLines();
+                window.addEventListener('resize', updateLines);
+                return () => window.removeEventListener('resize', updateLines);
+            }, [connections, isWordMode]);
+
+            const handleWordClick = (index) => {
+                if (!isWordMode) return;
+                setSelectedWordIndex(index === selectedWordIndex ? null : index);
+            };
+
+            const handleOptionClick = (optIndex, optText) => {
+                if (!isWordMode || selectedWordIndex === null) return;
+                
+                const words = question.expression.split(' ');
+                const word = words[selectedWordIndex];
+                const expectedType = getWordType(word);
+                
+                // If it's the underlined word, use the correctIndex from the question
+                const isUnderlined = word.includes('_');
+                let isCorrect = false;
+                
+                if (isUnderlined) {
+                    isCorrect = optIndex === question.correctIndex;
+                } else {
+                    isCorrect = expectedType === optText;
+                }
+
+                const newConnection = { wordIndex: selectedWordIndex, optionIndex: optIndex, isCorrect, id: Date.now() };
+
+                setConnections(prev => {
+                    const filtered = prev.filter(c => c.wordIndex !== selectedWordIndex);
+                    return [...filtered, newConnection];
+                });
+                setSelectedWordIndex(null);
+
+                if (!isCorrect) {
+                    setTimeout(() => {
+                        setConnections(prev => prev.map(c => c.id === newConnection.id ? { ...c, isBreaking: true } : c));
+                        setTimeout(() => {
+                            setConnections(prev => prev.filter(c => c.id !== newConnection.id));
+                        }, 500); // Wait for break animation
+                    }, 800); // Show red line for a bit before breaking
+                }
+            };
+
+            useEffect(() => {
+                const canvas = canvasRef.current;
+                const ctx = canvas.getContext('2d');
+                const resize = () => {
+                    const temp = ctx.getImageData(0,0,canvas.width, canvas.height);
+                    canvas.width = canvas.offsetWidth;
+                    canvas.height = canvas.offsetHeight;
+                    ctx.putImageData(temp, 0, 0);
+                    ctx.lineCap = 'round';
+                    ctx.lineJoin = 'round';
+                    ctx.lineWidth = 4;
+                };
+                // Initial size
+                canvas.width = canvas.offsetWidth;
+                canvas.height = canvas.offsetHeight;
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+                ctx.lineWidth = 4;
+                
+                window.addEventListener('resize', resize);
+                return () => window.removeEventListener('resize', resize);
+            }, []);
+
+            const startDrawing = (e) => {
+                const canvas = canvasRef.current;
+                const ctx = canvas.getContext('2d');
+                const rect = canvas.getBoundingClientRect();
+                const x = (e.clientX || (e.touches && e.touches[0].clientX)) - rect.left;
+                const y = (e.clientY || (e.touches && e.touches[0].clientY)) - rect.top;
+                ctx.strokeStyle = color;
+                ctx.beginPath();
+                ctx.moveTo(x, y);
+                setIsDrawing(true);
+            };
+
+            const draw = (e) => {
+                if (!isDrawing) return;
+                e.preventDefault();
+                const canvas = canvasRef.current;
+                const ctx = canvas.getContext('2d');
+                const rect = canvas.getBoundingClientRect();
+                const x = (e.clientX || (e.touches && e.touches[0].clientX)) - rect.left;
+                const y = (e.clientY || (e.touches && e.touches[0].clientY)) - rect.top;
+                ctx.lineTo(x, y);
+                ctx.stroke();
+            };
+
+            const stopDrawing = () => {
+                setIsDrawing(false);
+            };
+
+            const handleClose = () => {
+                setIsClosing(true);
+                setTimeout(onClose, 800);
+            };
+
+            return (
+                <div className="fixed inset-0 z-[200] overflow-hidden flex flex-col bg-white">
+                    {/* Eggshell Halves */}
+                    <div className={`absolute inset-x-0 top-0 h-[55vh] bg-slate-900 z-50 pointer-events-none flex items-center justify-center ${isClosing ? 'animate-close-top' : 'animate-crack-top'}`} style={{ clipPath: 'polygon(0 0, 100% 0, 100% 90%, 85% 100%, 70% 85%, 50% 100%, 30% 85%, 15% 100%, 0 90%)' }}>
+                        <div className="text-slate-800 opacity-50 flex flex-col items-center">
+                            <GraduationCap className="w-32 h-32 mb-4" />
+                            <span className="text-4xl font-black tracking-widest">ERKLÄRMONSTER</span>
+                        </div>
+                    </div>
+                    <div className={`absolute inset-x-0 bottom-0 h-[55vh] bg-slate-900 z-50 pointer-events-none ${isClosing ? 'animate-close-bottom' : 'animate-crack-bottom'}`} style={{ clipPath: 'polygon(0 10%, 15% 20%, 30% 5%, 50% 20%, 70% 5%, 85% 20%, 100% 10%, 100% 100%, 0 100%)' }}>
+                    </div>
+
+                    {/* Whiteboard Content */}
+                    <div className="relative z-40 flex flex-col h-full animate-in fade-in duration-1000 delay-300">
+                        <div className="p-4 md:p-6 bg-slate-100 border-b border-slate-300 flex justify-between items-center shadow-sm z-40">
+                            <div>
+                                <h3 className="text-slate-500 font-bold text-sm uppercase tracking-widest flex items-center gap-2"><PenTool className="w-4 h-4"/> Erklärmonster-Board</h3>
+                                {isWordMode && <p className="text-sm text-blue-600 font-bold mt-1 animate-pulse">Tippe auf ein Wort und dann auf eine Wortart, um sie zu verbinden!</p>}
+                            </div>
+                            <button onClick={handleClose} className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 md:px-6 md:py-3 rounded-2xl font-bold text-base md:text-lg shadow-lg shadow-green-500/30 flex items-center gap-2 transition-transform active:scale-95 shrink-0">
+                                <Check className="w-6 h-6" /> <span className="hidden md:inline">Fertig</span>
+                            </button>
+                        </div>
+                        <div className="flex-1 relative cursor-crosshair bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGNpcmNsZSBjeD0iMiIgY3k9IjIiIHI9IjEiIGZpbGw9IiNlMmU4ZjAiLz48L3N2Zz4=')]">
+                            {/* Centered Question Content */}
+                            <div className={`absolute inset-0 flex flex-col items-center justify-center p-8 z-20 ${isWordMode ? '' : 'pointer-events-none opacity-40'}`}>
+                                <p className="text-2xl md:text-4xl font-black text-slate-800 text-center mb-8 max-w-4xl"><MathText text={question.text} /></p>
+                                
+                                {question.expression && (
+                                    <div className="text-3xl md:text-5xl text-blue-800 font-mono font-bold mb-24 text-center max-w-4xl flex flex-wrap justify-center gap-x-4 gap-y-6">
+                                        {isWordMode ? (
+                                            question.expression.split(' ').map((word, i) => {
+                                                const isSelected = selectedWordIndex === i;
+                                                const hasConnection = connections.some(c => c.wordIndex === i);
+                                                return (
+                                                    <span 
+                                                        key={i} 
+                                                        ref={el => wordRefs.current[i] = el}
+                                                        onClick={() => handleWordClick(i)}
+                                                        className={`cursor-pointer px-2 py-1 rounded-lg transition-all ${isSelected ? 'bg-yellow-300 ring-4 ring-yellow-400 scale-110' : 'hover:bg-blue-100'} ${hasConnection ? 'opacity-80' : ''}`}
+                                                    >
+                                                        {word.replace(/_/g, '')}
+                                                    </span>
+                                                );
+                                            })
+                                        ) : (
+                                            <MathText text={question.expression} />
+                                        )}
+                                    </div>
+                                )}
+
+                                <div className="flex flex-wrap justify-center gap-8 max-w-4xl mt-12">
+                                    {question.options.map((opt, i) => (
+                                        <div 
+                                            key={i} 
+                                            ref={el => optionRefs.current[i] = el}
+                                            onClick={() => handleOptionClick(i, opt)}
+                                            className={`px-8 py-4 rounded-xl text-2xl md:text-3xl font-bold border-4 transition-all ${isWordMode ? 'cursor-pointer hover:scale-105 shadow-lg' : ''} ${!isWordMode && i === question.correctIndex ? 'bg-green-100 border-green-500 text-green-800' : 'bg-white border-slate-300 text-slate-700 hover:border-blue-400 hover:text-blue-600'}`}
+                                        >
+                                            <MathText text={opt} />
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* SVG for connections */}
+                            {isWordMode && (
+                                <svg className="absolute inset-0 w-full h-full pointer-events-none z-10" style={{ overflow: 'visible' }}>
+                                    {lineCoords.map((line, i) => {
+                                        const conn = connections[i];
+                                        if (!conn) return null;
+                                        const isBreaking = conn.isBreaking;
+                                        
+                                        return (
+                                            <g key={conn.id} className={isBreaking ? 'animate-ping opacity-0 transition-opacity duration-500' : 'animate-in fade-in duration-300'}>
+                                                <line 
+                                                    x1={line.x1} y1={line.y1} 
+                                                    x2={line.x2} y2={line.y2} 
+                                                    stroke={line.isCorrect ? '#22c55e' : '#ef4444'} 
+                                                    strokeWidth="6" 
+                                                    strokeLinecap="round"
+                                                    strokeDasharray={isBreaking ? "10, 20" : "none"}
+                                                />
+                                                {line.isCorrect ? (
+                                                    <circle cx={(line.x1 + line.x2)/2} cy={(line.y1 + line.y2)/2} r="12" fill="#22c55e" />
+                                                ) : (
+                                                    <path d={`M${(line.x1 + line.x2)/2 - 8},${(line.y1 + line.y2)/2 - 8} L${(line.x1 + line.x2)/2 + 8},${(line.y1 + line.y2)/2 + 8} M${(line.x1 + line.x2)/2 + 8},${(line.y1 + line.y2)/2 - 8} L${(line.x1 + line.x2)/2 - 8},${(line.y1 + line.y2)/2 + 8}`} stroke="white" strokeWidth="4" strokeLinecap="round" />
+                                                )}
+                                            </g>
+                                        );
+                                    })}
+                                </svg>
+                            )}
+                            
+                            <canvas 
+                                ref={canvasRef}
+                                className={`absolute inset-0 w-full h-full touch-none ${isWordMode ? 'z-30 pointer-events-none' : 'z-10'}`}
+                                onMouseDown={startDrawing}
+                                onMouseMove={draw}
+                                onMouseUp={stopDrawing}
+                                onMouseOut={stopDrawing}
+                                onTouchStart={startDrawing}
+                                onTouchMove={draw}
+                                onTouchEnd={stopDrawing}
+                            />
+                            {/* Toolbar */}
+                            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex gap-2 bg-white p-2 rounded-2xl shadow-xl border border-slate-200">
+                                 <button onClick={() => setColor('#0f172a')} className={`w-10 h-10 rounded-xl bg-slate-900 ${color === '#0f172a' ? 'ring-4 ring-blue-300 scale-110' : ''} transition-all`}></button>
+                                 <button onClick={() => setColor('#ef4444')} className={`w-10 h-10 rounded-xl bg-red-500 ${color === '#ef4444' ? 'ring-4 ring-blue-300 scale-110' : ''} transition-all`}></button>
+                                 <button onClick={() => setColor('#3b82f6')} className={`w-10 h-10 rounded-xl bg-blue-500 ${color === '#3b82f6' ? 'ring-4 ring-blue-300 scale-110' : ''} transition-all`}></button>
+                                 <button onClick={() => setColor('#10b981')} className={`w-10 h-10 rounded-xl bg-green-500 ${color === '#10b981' ? 'ring-4 ring-blue-300 scale-110' : ''} transition-all`}></button>
+                                 <div className="w-px bg-slate-200 mx-1"></div>
+                                 <button onClick={() => {
+                                     const canvas = canvasRef.current;
+                                     const ctx = canvas.getContext('2d');
+                                     ctx.clearRect(0, 0, canvas.width, canvas.height);
+                                 }} className="bg-slate-100 hover:bg-slate-200 text-slate-600 w-10 h-10 rounded-xl flex items-center justify-center transition-colors" title="Alles löschen">
+                                     <Trash className="w-5 h-5" />
+                                 </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- GameScreen Component ---
+        const GameScreen = ({ gameState, setGameState, onExit }) => {
+            const [selectedOption, setSelectedOption] = useState(null);
+            const [isAnswering, setIsAnswering] = useState(false);
+            const [feedback, setFeedback] = useState(null);
+            const [showExitConfirm, setShowExitConfirm] = useState(false);
+            const [isExplaining, setIsExplaining] = useState(false);
+
+            const currentTeam = gameState.teams[gameState.currentTeamIndex];
+            const teamConfig = TEAM_CONFIGS[gameState.currentTeamIndex % TEAM_CONFIGS.length];
+
+            useEffect(() => {
+                if (!gameState.currentQuestion && !gameState.isGeneratingQuestion) {
+                    loadQuestion();
+                }
+            }, [gameState.currentTeamIndex, gameState.currentQuestion]);
+
+            const loadQuestion = async () => {
+                setGameState(prev => ({ ...prev, isGeneratingQuestion: true }));
+                const difficulty = currentTeam.stage >= MonsterStage.TEEN ? 'medium' : 'easy';
+                const question = await generateQuestion(difficulty, gameState.selectedCategory, gameState.customQuestions);
+                setGameState(prev => ({ ...prev, isGeneratingQuestion: false, currentQuestion: question }));
+            };
+
+            const handleAnswer = async (index) => {
+                if (isAnswering || !gameState.currentQuestion) return;
+                SoundService.playClick();
+                setSelectedOption(index);
+                setIsAnswering(true);
+                const isCorrect = index === gameState.currentQuestion.correctIndex;
+                await new Promise(r => setTimeout(r, 800));
+                setFeedback(isCorrect ? 'correct' : 'incorrect');
+
+                setGameState(prev => {
+                    const newTeams = [...prev.teams];
+                    const team = { ...newTeams[prev.currentTeamIndex] };
+                    let leveledUp = false;
+                    if (isCorrect) {
+                        team.streak += 1;
+                        team.score += 55;
+                        team.exp += 50;
+                        if (team.exp >= EXP_TO_LEVEL) {
+                            if (team.stage < MonsterStage.TITAN) {
+                                team.stage += 1;
+                                team.exp = 0;
+                                leveledUp = true;
+                            }
+                        }
+                        leveledUp ? SoundService.playLevelUp() : SoundService.playCorrect();
+                    } else {
+                        SoundService.playIncorrect();
+                        team.streak = 0;
+                        team.exp = Math.max(0, team.exp - 30);
+                        if (team.exp === 0 && team.stage > MonsterStage.EGG) {
+                            if (team.stage > MonsterStage.HATCHLING) {
+                                team.stage -= 1;
+                                team.exp = EXP_TO_LEVEL - 20;
+                            }
+                        }
+                    }
+                    newTeams[prev.currentTeamIndex] = team;
+                    return { ...prev, teams: newTeams };
+                });
+            };
+
+            const nextTurn = () => {
+                SoundService.playClick();
+                const winner = gameState.teams.find(t => t.stage === WINNING_STAGE);
+                if (winner) { /* handled in effect */ }
+                setFeedback(null);
+                setSelectedOption(null);
+                setIsAnswering(false);
+                setGameState(prev => ({
+                    ...prev,
+                    currentQuestion: null,
+                    currentTeamIndex: (prev.currentTeamIndex + 1) % prev.teams.length
+                }));
+            };
+
+            let monsterReaction = 'idle';
+            if (feedback === 'correct') monsterReaction = 'happy';
+            if (feedback === 'incorrect') monsterReaction = 'sad';
+
+            return (
+                <>
+                <div className="flex flex-col h-[100vh] bg-slate-900 overflow-hidden font-sans text-white relative">
+                    <button onClick={() => setShowExitConfirm(true)} className="absolute top-2 right-2 md:top-4 md:right-4 z-[50] p-2 bg-slate-800/80 hover:bg-red-500/80 rounded-lg border border-slate-700 transition-colors">
+                        <Home className="w-5 h-5 md:w-6 md:h-6" />
+                    </button>
+
+                    {showExitConfirm && (
+                        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
+                            <div className="glass-panel p-6 rounded-2xl max-w-sm w-full text-center bg-slate-900 border border-slate-700">
+                                <AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
+                                <h3 className="text-xl font-bold mb-2">Spiel beenden?</h3>
+                                <p className="text-slate-400 mb-6 text-sm">Fortschritt geht verloren.</p>
+                                <div className="flex gap-3">
+                                    <button onClick={() => setShowExitConfirm(false)} className="flex-1 py-3 rounded-xl bg-slate-800 font-bold">Abbrechen</button>
+                                    <button onClick={() => { SoundService.playClick(); onExit(); }} className="flex-1 py-3 rounded-xl bg-red-600 font-bold">Beenden</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    <header className="h-14 md:h-16 shrink-0 bg-slate-800/80 backdrop-blur border-b border-slate-700 flex items-center px-4 gap-4 overflow-x-auto z-20 no-scrollbar pr-14">
+                        <div className="hidden lg:flex items-center gap-2 mr-2 text-slate-400 font-bold uppercase tracking-wider text-sm"><Users className="w-4 h-4" /> Teams</div>
+                        <div className="flex gap-2 flex-1">
+                            {gameState.teams.map((team, idx) => {
+                                const isCurrent = idx === gameState.currentTeamIndex;
+                                const config = TEAM_CONFIGS[idx % TEAM_CONFIGS.length];
+                                return (
+                                    <div key={team.id} className={`relative flex items-center gap-2 px-2 py-1 rounded-lg transition-all duration-300 min-w-[90px] ${isCurrent ? `${config.color} text-white shadow-lg scale-105 border border-white/30` : 'bg-slate-700/50 text-slate-400'}`}>
+                                        <div className="w-5 h-5"><MonsterDisplay type={team.type} stage={team.stage} /></div>
+                                        <div className="flex flex-col leading-tight overflow-hidden">
+                                            <span className="font-bold truncate text-xs">{team.name}</span>
+                                            <span className="text-[10px] opacity-80">{team.score} Pkt</span>
+                                        </div>
+                                        <div className="absolute bottom-0 left-0 h-1 bg-black/20 w-full rounded-b-lg overflow-hidden">
+                                            <div className="h-full bg-white/70" style={{ width: `${(team.exp / EXP_TO_LEVEL) * 100}%` }}></div>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </header>
+
+                    <div className="flex-1 flex flex-col lg:flex-row overflow-hidden relative">
+                        <div className={`absolute inset-0 opacity-10 transition-colors duration-1000 ${teamConfig.color}`}></div>
+                        
+                        <div className="shrink-0 z-10 w-full lg:w-1/3 lg:max-w-md h-auto lg:h-full flex flex-row lg:flex-col items-center justify-between lg:justify-center p-2 lg:p-8 bg-slate-900/30 backdrop-blur-sm border-b lg:border-b-0 lg:border-r border-white/10">
+                            <div className="text-left lg:text-center w-1/2 lg:w-full flex flex-col justify-center">
+                                <h2 className="text-xl md:text-3xl font-black tracking-tight mb-1 truncate">{currentTeam.name}</h2>
+                                <div className="self-start lg:self-center inline-flex items-center gap-2 px-2 py-0.5 rounded-full bg-white/10 text-xs font-bold border border-white/10">
+                                    <span>Stufe {currentTeam.stage + 1}</span><span className="opacity-50">|</span><span>{currentTeam.score} XP</span>
+                                </div>
+                                <div className="hidden md:block w-full mt-4 bg-slate-800/80 p-3 rounded-xl border border-white/5 shadow-inner">
+                                    <div className="flex justify-between text-[10px] font-bold mb-1 uppercase tracking-wider text-slate-400"><span>Wachstum</span><span>{Math.floor(currentTeam.exp)}%</span></div>
+                                    <div className="h-2 bg-slate-900 rounded-full overflow-hidden relative"><div className={`h-full transition-all duration-700 ease-out ${teamConfig.color}`} style={{ width: `${(currentTeam.exp / EXP_TO_LEVEL) * 100}%` }}></div></div>
+                                </div>
+                            </div>
+                            <div className="flex-1 h-full flex items-center justify-center w-1/2 lg:w-full">
+                                <div className="h-full aspect-square relative max-h-[120px] md:max-h-[250px]">
+                                    <MonsterDisplay type={currentTeam.type} stage={currentTeam.stage} reaction={monsterReaction} />
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="flex-1 p-2 md:p-4 lg:p-6 flex flex-col relative z-10 overflow-hidden h-full min-h-0">
+                            <div className="glass-panel w-full h-full rounded-xl md:rounded-3xl p-3 md:p-6 lg:p-10 flex flex-col shadow-2xl relative overflow-hidden bg-slate-800/40 border-slate-700/50">
+                                {gameState.isGeneratingQuestion ? (
+                                    <div className="flex-1 flex flex-col items-center justify-center text-slate-300 gap-4">
+                                        <Loader2 className="w-16 h-16 animate-spin text-purple-500" />
+                                        <p className="text-xl font-bold animate-pulse">Eine Herausforderung erscheint...</p>
+                                    </div>
+                                ) : gameState.currentQuestion ? (
+                                    <>
+                                        <div className="shrink-0 mb-2 md:mb-6 text-center flex flex-col items-center justify-center py-2">
+                                            <span className="inline-block px-2 py-0.5 rounded bg-slate-900/50 text-slate-400 text-xs font-bold border border-slate-700 mb-2 uppercase tracking-widest">{gameState.currentQuestion.difficulty === 'easy' ? 'Leicht' : 'Mittel'}</span>
+                                            <h3 className="text-lg md:text-2xl lg:text-3xl font-bold leading-tight mb-3 max-w-4xl mx-auto"><MathText text={gameState.currentQuestion.text} /></h3>
+                                            {gameState.currentQuestion.expression && <div className="text-3xl md:text-5xl font-black text-white drop-shadow-md py-2"><MathText text={gameState.currentQuestion.expression} scale={1.1} /></div>}
+                                        </div>
+                                        <div className="flex-1 min-h-0 grid grid-cols-2 gap-2 md:gap-4 pb-2">
+                                            {gameState.currentQuestion.options.map((opt, i) => {
+                                                let stateClass = "bg-slate-800 hover:bg-slate-700 border-slate-600 text-slate-200 hover:border-purple-400/50";
+                                                if (feedback) {
+                                                    if (i === gameState.currentQuestion.correctIndex) stateClass = "bg-green-600 border-green-400 text-white shadow-[0_0_30px_rgba(34,197,94,0.3)] scale-[1.02] z-10";
+                                                    else if (i === selectedOption) stateClass = "bg-red-500/80 border-red-400 text-white opacity-50 grayscale";
+                                                    else stateClass = "opacity-20 bg-slate-900 border-transparent pointer-events-none";
+                                                } else if (selectedOption === i) stateClass = "bg-purple-600 border-purple-400 text-white shadow-lg scale-[1.02]";
+                                                return (
+                                                    <button key={i} disabled={isAnswering} onClick={() => handleAnswer(i)} className={`relative rounded-xl md:rounded-2xl border-b-4 md:border-b-8 text-xl md:text-3xl font-black transition-all duration-200 flex items-center justify-center p-2 shadow-lg h-full active:scale-[0.98] active:border-b-0 active:translate-y-2 ${stateClass}`}><MathText text={opt} scale={1.1} /></button>
+                                                );
+                                            })}
+                                        </div>
+                                    </>
+                                ) : null}
+
+                                {feedback && (
+                                    <div className="absolute inset-0 z-50 flex flex-col items-center justify-center animate-in fade-in zoom-in duration-300 rounded-xl bg-slate-900/95 backdrop-blur-xl">
+                                        {feedback === 'correct' ? (
+                                            <>
+                                                <div className="relative mb-6"><div className="absolute inset-0 bg-yellow-500 blur-[60px] opacity-30 animate-pulse"></div><Star className="w-24 h-24 text-yellow-400 fill-yellow-400 animate-[spin_4s_linear_infinite]" /></div>
+                                                <h3 className="text-6xl font-black text-white mb-2 tracking-tighter">RICHTIG!</h3>
+                                                <p className="text-2xl text-green-400 mb-8 font-bold">+XP für {currentTeam.name}!</p>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <Frown className="w-24 h-24 text-red-500 mb-6 animate-bounce" />
+                                                <h3 className="text-6xl font-black text-white mb-2 tracking-tighter">FALSCH</h3>
+                                                {gameState.currentQuestion.explanation && <div className="bg-slate-800/80 p-4 rounded-xl max-w-xl text-center border border-white/10 mb-6"><p className="text-slate-200 text-lg"><MathText text={gameState.currentQuestion.explanation}/></p></div>}
+                                            </>
+                                        )}
+                                        <div className="flex flex-col md:flex-row gap-3 justify-center mt-6">
+                                            <button 
+                                                onClick={() => setIsExplaining(true)}
+                                                className="bg-white/20 hover:bg-white/30 text-white px-6 py-4 rounded-2xl font-bold text-lg md:text-xl transition-all shadow-lg flex items-center justify-center gap-2"
+                                            >
+                                                <GraduationCap className="w-6 h-6" /> Erklärmonster
+                                            </button>
+                                            <button 
+                                                onClick={nextTurn}
+                                                className="bg-white text-slate-900 px-8 py-4 rounded-2xl font-black text-lg md:text-xl transition-transform hover:scale-105 shadow-xl flex items-center justify-center gap-2"
+                                            >
+                                                Nächste Frage <ArrowRight className="w-6 h-6" />
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                {isExplaining && <Whiteboard question={gameState.currentQuestion} onClose={() => setIsExplaining(false)} />}
+            </>
+        );
+    };
+
+        // --- VictoryScreen Component ---
+        const VictoryScreen = ({ gameState, onRestart }) => {
+            const winner = gameState.teams.find(t => t.stage === MonsterStage.TITAN) || gameState.teams[0];
+
+            useEffect(() => {
+                SoundService.playVictory();
+                const duration = 5000;
+                const end = Date.now() + duration;
+                const frame = () => {
+                    confetti({ particleCount: 5, angle: 60, spread: 55, origin: { x: 0 } });
+                    confetti({ particleCount: 5, angle: 120, spread: 55, origin: { x: 1 } });
+                    if (Date.now() < end) requestAnimationFrame(frame);
+                };
+                frame();
+                
+                // Save Highscore automatically
+                CloudService.saveHighscore({
+                    name: winner.name,
+                    score: winner.score,
+                    type: winner.type
+                });
+            }, []);
+
+            return (
+                <div className="h-screen bg-slate-900 flex items-center justify-center p-4">
+                    <div className="glass-panel max-w-3xl w-full p-12 rounded-3xl text-center flex flex-col items-center">
+                        <div className="bg-yellow-500 rounded-full p-6 mb-6 shadow-2xl shadow-yellow-500/50 animate-bounce"><Trophy className="w-16 h-16 text-white" /></div>
+                        <h1 className="text-6xl font-black text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 via-orange-500 to-red-500 mb-2">{winner.name.toUpperCase()} GEWINNT!</h1>
+                        <p className="text-2xl text-slate-300 mb-12">Ihr Monster ist zum TITAN geworden!</p>
+                        <div className="w-64 h-64 mb-12"><MonsterDisplay type={winner.type} stage={MonsterStage.TITAN} reaction="happy" /></div>
+                        <button onClick={() => { SoundService.playClick(); onRestart(); }} className="bg-white text-slate-900 px-8 py-4 rounded-xl text-xl font-black hover:scale-105 transition-transform flex items-center gap-2 shadow-lg"><RefreshCw className="w-6 h-6" /> NOCHMAL SPIELEN</button>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- Main App Component ---
+        const App = () => {
+            const [gameState, setGameState] = useState({
+                phase: GamePhase.SETUP,
+                teams: [],
+                currentTeamIndex: 0,
+                currentQuestion: null,
+                isGeneratingQuestion: false,
+                message: null,
+                selectedCategory: 'ALL',
+                customQuestions: []
+            });
+            const [isFullscreen, setIsFullscreen] = useState(false);
+
+            useEffect(() => {
+                const handleFS = () => setIsFullscreen(!!document.fullscreenElement);
+                document.addEventListener('fullscreenchange', handleFS);
+                return () => document.removeEventListener('fullscreenchange', handleFS);
+            }, []);
+
+            const toggleFullscreen = () => {
+                if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(console.error);
+                else document.exitFullscreen();
+            };
+
+            const handleStartGame = (names, category, customQuestions) => {
+                resetQuestionHistory();
+                const teams = names.map((name, index) => ({
+                    id: `team-${index}`,
+                    name: name || `Team ${index + 1}`,
+                    type: TEAM_CONFIGS[index % TEAM_CONFIGS.length].type,
+                    score: 0,
+                    stage: MonsterStage.EGG,
+                    exp: 0,
+                    streak: 0,
+                }));
+                setGameState(prev => ({
+                    ...prev,
+                    phase: GamePhase.PLAYING,
+                    teams,
+                    currentTeamIndex: 0,
+                    selectedCategory: category,
+                    customQuestions
+                }));
+            };
+
+            const handleRestart = () => {
+                resetQuestionHistory();
+                setGameState(prev => ({
+                    ...prev,
+                    phase: GamePhase.SETUP,
+                    teams: [],
+                    currentTeamIndex: 0,
+                    currentQuestion: null,
+                    message: null
+                }));
+            };
+
+            useEffect(() => {
+                if (gameState.phase === GamePhase.PLAYING) {
+                    const winner = gameState.teams.find(t => t.stage === WINNING_STAGE);
+                    if (winner) setGameState(prev => ({ ...prev, phase: GamePhase.VICTORY }));
+                }
+            }, [gameState.teams, gameState.phase]);
+
+            return (
+                <div className="min-h-screen bg-slate-900 text-white font-sans selection:bg-purple-500 selection:text-white">
+                    <button onClick={toggleFullscreen} className="fixed top-2 left-2 md:top-4 md:left-4 z-[100] p-2 bg-slate-800/80 hover:bg-blue-600/80 text-slate-300 hover:text-white rounded-lg border border-slate-700 transition-colors shadow-lg backdrop-blur">
+                        {isFullscreen ? <Minimize className="w-5 h-5 md:w-6 md:h-6" /> : <Maximize className="w-5 h-5 md:w-6 md:h-6" />}
+                    </button>
+
+                    {gameState.phase === GamePhase.SETUP && <SetupScreen onStart={handleStartGame} />}
+                    {gameState.phase === GamePhase.PLAYING && <GameScreen gameState={gameState} setGameState={setGameState} onExit={handleRestart} />}
+                    {gameState.phase === GamePhase.VICTORY && <VictoryScreen gameState={gameState} onRestart={handleRestart} />}
+                </div>
+            );
+        };
+
+        export default App;
+    

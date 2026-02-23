@@ -1,0 +1,110 @@
+
+      body {
+        font-family: 'Fredoka', sans-serif;
+        background-color: #0f172a;
+        color: white;
+        overflow: hidden; /* Prevent scrolling on whiteboard */
+      }
+      .game-font {
+        font-family: 'Nunito', sans-serif;
+      }
+      .glass-panel {
+        background: rgba(30, 41, 59, 0.7); /* Etwas dunkler für besseren Kontrast */
+        backdrop-filter: blur(12px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+      }
+      
+      /* Animation Keyframes */
+      @keyframes float {
+        0%, 100% { transform: translateY(0px); }
+        50% { transform: translateY(-10px); }
+      }
+      @keyframes blink {
+        0%, 90%, 100% { transform: scaleY(1); }
+        95% { transform: scaleY(0.1); }
+      }
+      @keyframes wobble {
+        0%, 100% { transform: translateX(0%); }
+        15% { transform: translateX(-15%) rotate(-5deg); }
+        30% { transform: translateX(10%) rotate(3deg); }
+        45% { transform: translateX(-10%) rotate(-3deg); }
+        60% { transform: translateX(5%) rotate(2deg); }
+        75% { transform: translateX(-5%) rotate(-1deg); }
+      }
+      @keyframes happy-jump {
+        0%, 100% { transform: translateY(0) scale(1); }
+        25% { transform: translateY(-20px) scale(1.1); }
+        50% { transform: translateY(0) scale(0.95); }
+        75% { transform: translateY(-10px) scale(1.05); }
+      }
+      @keyframes pulse-glow {
+        0%, 100% { opacity: 0.3; transform: scale(1); }
+        50% { opacity: 0.6; transform: scale(1.05); }
+      }
+      @keyframes crack-shake {
+        0%, 100% { transform: rotate(0deg); }
+        25% { transform: rotate(2deg); }
+        75% { transform: rotate(-2deg); }
+      }
+      @keyframes blob {
+        0% { transform: translate(0px, 0px) scale(1); }
+        33% { transform: translate(30px, -50px) scale(1.1); }
+        66% { transform: translate(-20px, 20px) scale(0.9); }
+        100% { transform: translate(0px, 0px) scale(1); }
+      }
+
+      /* Animation Classes */
+      .animate-float { animation: float 3s ease-in-out infinite; }
+      .animate-blink { animation: blink 4s infinite; transform-origin: center; transform-box: fill-box; }
+      .animate-wobble { animation: wobble 0.6s ease-in-out; }
+      .animate-happy { animation: happy-jump 0.8s ease-in-out; }
+      .animate-pulse-glow { animation: pulse-glow 2s ease-in-out infinite; }
+      .animate-crack { animation: crack-shake 3s ease-in-out infinite; transform-origin: center; }
+      .animate-blob { animation: blob 7s infinite; }
+      .animation-delay-2000 { animation-delay: 2s; }
+
+      /* Erklärmonster Animations */
+      @keyframes crack-top {
+        0% { transform: translateY(0); }
+        20% { transform: translateY(-10px) rotate(-1deg); }
+        100% { transform: translateY(-100%) rotate(-5deg); }
+      }
+      @keyframes crack-bottom {
+        0% { transform: translateY(0); }
+        20% { transform: translateY(10px) rotate(1deg); }
+        100% { transform: translateY(100%) rotate(5deg); }
+      }
+      .animate-crack-top { animation: crack-top 1.2s forwards cubic-bezier(0.25, 1, 0.5, 1); }
+      .animate-crack-bottom { animation: crack-bottom 1.2s forwards cubic-bezier(0.25, 1, 0.5, 1); }
+      
+      @keyframes close-top {
+        0% { transform: translateY(-100%) rotate(-5deg); }
+        100% { transform: translateY(0) rotate(0); }
+      }
+      @keyframes close-bottom {
+        0% { transform: translateY(100%) rotate(5deg); }
+        100% { transform: translateY(0) rotate(0); }
+      }
+      .animate-close-top { animation: close-top 0.8s forwards cubic-bezier(0.25, 1, 0.5, 1); }
+      .animate-close-bottom { animation: close-bottom 0.8s forwards cubic-bezier(0.25, 1, 0.5, 1); }
+
+      .custom-scrollbar::-webkit-scrollbar {
+        width: 8px;
+      }
+      .custom-scrollbar::-webkit-scrollbar-track {
+        background: rgba(0,0,0,0.1);
+        border-radius: 4px;
+      }
+      .custom-scrollbar::-webkit-scrollbar-thumb {
+        background: rgba(255,255,255,0.2);
+        border-radius: 4px;
+      }
+      .no-scrollbar::-webkit-scrollbar {
+        display: none;
+      }
+      .no-scrollbar {
+        -ms-overflow-style: none;
+        scrollbar-width: none;
+      }
+    

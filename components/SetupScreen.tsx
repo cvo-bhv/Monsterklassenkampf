@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { MAX_TEAMS, TEAM_CONFIGS } from '../constants';
 import { QuestionCategory, Question, MonsterType, SavedTeamSet } from '../types';
-import { Plus, Play, User, X, Briefcase, Calculator, Scissors, ArrowRightLeft, Layers, PenTool, Edit3, Save, Upload, Download, Trash, Zap, BookOpen, Clock, AlignLeft, GraduationCap, Smile, ChevronLeft, ChevronRight, Settings, FolderOpen, Users } from 'lucide-react';
+import { Plus, Play, User, X, Briefcase, Calculator, Scissors, ArrowRightLeft, Layers, PenTool, Edit3, Save, Upload, Download, Trash, Zap, BookOpen, Clock, AlignLeft, GraduationCap, Smile, ChevronLeft, ChevronRight, Settings, FolderOpen, Users, Sparkles, Copy } from 'lucide-react';
 import { SoundService } from '../services/soundService';
 import MonsterDisplay from './MonsterDisplay';
 
@@ -27,6 +27,16 @@ const SetupScreen: React.FC<SetupScreenProps> = ({ onStart }) => {
   // Custom Questions State
   const [customQuestions, setCustomQuestions] = useState<Question[]>([]);
   const [isEditorOpen, setIsEditorOpen] = useState(false);
+  const [isPromptGeneratorOpen, setIsPromptGeneratorOpen] = useState(false);
+  const [promptData, setPromptData] = useState({
+      topic: '',
+      subject: '',
+      grade: '',
+      count: 10,
+      additionalText: ''
+  });
+  const [generatedPrompt, setGeneratedPrompt] = useState('');
+  const [aiJsonImport, setAiJsonImport] = useState('');
   
   // Editor Form State
   const [editQ, setEditQ] = useState<Partial<Question>>({
@@ -115,15 +125,30 @@ const SetupScreen: React.FC<SetupScreenProps> = ({ onStart }) => {
   const addCustomQuestion = () => {
     if (!editQ.text || !editQ.options || editQ.options.some(o => !o)) return;
     
-    const newQ: Question = {
-      ...editQ as Question,
-      id: Date.now().toString(),
-      category: 'CUSTOM'
-    };
+    if (editQ.id) {
+        // Update existing
+        setCustomQuestions(customQuestions.map(q => q.id === editQ.id ? { ...editQ as Question, category: 'CUSTOM' } : q));
+    } else {
+        // Add new
+        const newQ: Question = {
+          ...editQ as Question,
+          id: Date.now().toString(),
+          category: 'CUSTOM'
+        };
+        setCustomQuestions([...customQuestions, newQ]);
+    }
     
-    setCustomQuestions([...customQuestions, newQ]);
     setEditQ({ text: '', expression: '', options: ['', '', '', ''], correctIndex: 0, difficulty: 'medium', category: 'CUSTOM' });
     SoundService.playClick();
+  };
+
+  const handleEditQuestion = (q: Question) => {
+      setEditQ(q);
+      SoundService.playClick();
+  };
+
+  const cancelEditQuestion = () => {
+      setEditQ({ text: '', expression: '', options: ['', '', '', ''], correctIndex: 0, difficulty: 'medium', category: 'CUSTOM' });
   };
 
   const removeCustomQuestion = (id: string) => {
@@ -324,12 +349,20 @@ const SetupScreen: React.FC<SetupScreenProps> = ({ onStart }) => {
                     </button>
                 </div>
 
-                <button 
-                  onClick={() => setIsEditorOpen(true)}
-                  className="bg-slate-700 hover:bg-slate-600 text-xs px-3 py-1 rounded-full flex items-center gap-2 transition-colors border border-white/10 ml-auto md:ml-0"
-                >
-                  <Edit3 className="w-3 h-3"/> Aufgaben-Editor ({customQuestions.length})
-                </button>
+                <div className="flex gap-2 ml-auto md:ml-0">
+                  <button 
+                    onClick={() => setIsPromptGeneratorOpen(true)}
+                    className="bg-purple-600 hover:bg-purple-500 text-xs px-3 py-1 rounded-full flex items-center gap-2 transition-colors border border-white/10"
+                  >
+                    <Sparkles className="w-3 h-3"/> KI-Mission generieren
+                  </button>
+                  <button 
+                    onClick={() => setIsEditorOpen(true)}
+                    className="bg-slate-700 hover:bg-slate-600 text-xs px-3 py-1 rounded-full flex items-center gap-2 transition-colors border border-white/10"
+                  >
+                    <Edit3 className="w-3 h-3"/> Aufgaben-Editor ({customQuestions.length})
+                  </button>
+                </div>
              </div>
 
              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-8 gap-3">
@@ -396,6 +429,158 @@ const SetupScreen: React.FC<SetupScreenProps> = ({ onStart }) => {
         </div>
       </div>
 
+      {/* MODAL: PROMPT GENERATOR */}
+      {isPromptGeneratorOpen && (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in">
+              <div className="glass-panel w-full max-w-4xl bg-slate-900 rounded-3xl overflow-hidden flex flex-col max-h-[90vh]">
+                  <div className="bg-slate-800 p-4 border-b border-white/10 flex justify-between items-center">
+                      <h2 className="text-xl font-bold flex items-center gap-2"><Sparkles className="w-5 h-5 text-purple-400"/> KI-Missions-Generator</h2>
+                      <button onClick={() => setIsPromptGeneratorOpen(false)} className="p-2 hover:bg-red-500/20 rounded-full"><X/></button>
+                  </div>
+                  <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                          {/* Left Column: Input */}
+                          <div className="space-y-4">
+                              <h3 className="text-lg font-bold text-purple-400 mb-2">1. Mission definieren</h3>
+                              <div className="grid grid-cols-2 gap-4">
+                                  <div>
+                                      <label className="text-xs text-slate-400 block mb-1">Fach</label>
+                                      <input className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white" placeholder="z.B. Englisch" value={promptData.subject} onChange={e => setPromptData({...promptData, subject: e.target.value})} />
+                                  </div>
+                                  <div>
+                                      <label className="text-xs text-slate-400 block mb-1">Klasse</label>
+                                      <input className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white" placeholder="z.B. 7. Klasse" value={promptData.grade} onChange={e => setPromptData({...promptData, grade: e.target.value})} />
+                                  </div>
+                              </div>
+                              <div>
+                                  <label className="text-xs text-slate-400 block mb-1">Thema</label>
+                                  <input className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white" placeholder="z.B. Present Perfect" value={promptData.topic} onChange={e => setPromptData({...promptData, topic: e.target.value})} />
+                              </div>
+                              <div>
+                                  <label className="text-xs text-slate-400 block mb-1">Anzahl der Fragen</label>
+                                  <input type="number" className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-white" value={promptData.count} onChange={e => setPromptData({...promptData, count: parseInt(e.target.value) || 10})} min="1" max="100" />
+                              </div>
+                              <div>
+                                  <label className="text-xs text-slate-400 block mb-1">Zusätzlicher Text / Vokabeln (Optional)</label>
+                                  <textarea className="w-full h-24 bg-slate-800 border border-slate-600 rounded p-2 text-white text-sm" placeholder="Füge hier Vokabeln, Texte oder spezielle Anweisungen ein..." value={promptData.additionalText} onChange={e => setPromptData({...promptData, additionalText: e.target.value})} />
+                              </div>
+                              <button 
+                                  onClick={() => {
+                                      const prompt = `Erstelle Quizfragen für ein Lernspiel.\nFach: ${promptData.subject || 'Allgemein'}\nThema: ${promptData.topic || 'Allgemein'}\nKlasse/Zielgruppe: ${promptData.grade || 'Alle'}\nAnzahl der Fragen: ${promptData.count}\n\n${promptData.additionalText ? `Bitte beachte folgende zusätzliche Informationen/Inhalte:\n${promptData.additionalText}\n\n` : ''}Bitte erstelle zu jeder Frage genau 4 Antwortmöglichkeiten, von denen genau eine richtig ist.\nGib die Fragen AUSSCHLIESSLICH in folgendem JSON-Format aus. Antworte nur mit dem JSON-Array, ohne weiteren Text davor oder danach:\n\n[\n  {\n    "text": "Die eigentliche Frage",\n    "expression": "Optional: Ein zusätzlicher Text oder eine Formatierung (z.B. ein Lückentext mit _Lücke_ oder eine Matheaufgabe)",\n    "options": [\n      "Antwort 1",\n      "Antwort 2",\n      "Antwort 3",\n      "Antwort 4"\n    ],\n    "correctIndex": 0,\n    "difficulty": "medium",\n    "category": "CUSTOM"\n  }\n]`;
+                                      setGeneratedPrompt(prompt);
+                                  }}
+                                  className="w-full bg-purple-600 hover:bg-purple-500 text-white font-bold py-3 rounded-xl transition-colors"
+                              >
+                                  Prompt generieren
+                              </button>
+                          </div>
+
+                          {/* Right Column: Output & Import */}
+                          <div className="space-y-6">
+                              <div className="space-y-4">
+                                  <h3 className="text-lg font-bold text-blue-400 mb-2">2. KI befragen</h3>
+                                  <textarea 
+                                      className="w-full h-32 bg-black/50 font-mono text-xs text-slate-300 p-2 rounded border border-slate-700"
+                                      readOnly
+                                      value={generatedPrompt}
+                                      placeholder="Dein Prompt erscheint hier..."
+                                  />
+                                  <div className="flex gap-2">
+                                      <button 
+                                          onClick={() => navigator.clipboard.writeText(generatedPrompt)}
+                                          disabled={!generatedPrompt}
+                                          className="flex-1 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 py-2 rounded text-xs font-bold flex items-center justify-center gap-1"
+                                      >
+                                          <Copy className="w-4 h-4"/> Prompt kopieren
+                                      </button>
+                                      <a href="https://chatgpt.com" target="_blank" rel="noreferrer" className="flex-1 bg-[#10a37f] hover:bg-[#0e906f] py-2 rounded text-xs font-bold flex items-center justify-center gap-1 text-white">
+                                          ChatGPT öffnen
+                                      </a>
+                                      <a href="https://gemini.google.com" target="_blank" rel="noreferrer" className="flex-1 bg-[#4285f4] hover:bg-[#3367d6] py-2 rounded text-xs font-bold flex items-center justify-center gap-1 text-white">
+                                          Gemini öffnen
+                                      </a>
+                                  </div>
+                              </div>
+
+                              <div className="space-y-4 pt-4 border-t border-white/10">
+                                  <h3 className="text-lg font-bold text-green-400 mb-2">3. JSON importieren</h3>
+                                  <textarea 
+                                      className="w-full h-32 bg-black/50 font-mono text-xs text-green-400 p-2 rounded border border-slate-700"
+                                      value={aiJsonImport}
+                                      onChange={e => {
+                                          setAiJsonImport(e.target.value);
+                                          // Try auto-import
+                                          try {
+                                              // Clean up markdown code blocks if present
+                                              let cleanJson = e.target.value.trim();
+                                              if (cleanJson.startsWith('```json')) {
+                                                  cleanJson = cleanJson.replace(/^```json\n/, '').replace(/\n```$/, '');
+                                              } else if (cleanJson.startsWith('```')) {
+                                                  cleanJson = cleanJson.replace(/^```\n/, '').replace(/\n```$/, '');
+                                              }
+                                              
+                                              const parsed = JSON.parse(cleanJson);
+                                              if (Array.isArray(parsed)) {
+                                                  const valid = parsed.every(q => q.text && Array.isArray(q.options) && typeof q.correctIndex === 'number');
+                                                  if (valid) {
+                                                      const newSet = parsed.map((q: any) => ({...q, category: 'CUSTOM', id: q.id || Math.random().toString()}));
+                                                      
+                                                      // Ask if they want to add to current draft or save directly
+                                                      if (confirm(`Erfolgreich ${newSet.length} Fragen erkannt! Möchtest du sie direkt den Aufgaben hinzufügen?`)) {
+                                                          const updatedQuestions = [...customQuestions, ...newSet];
+                                                          setCustomQuestions(updatedQuestions);
+                                                          alert(`Fragen wurden hinzugefügt!`);
+                                                          setAiJsonImport('');
+                                                          setIsPromptGeneratorOpen(false);
+                                                      }
+                                                  }
+                                              }
+                                          } catch (err) {
+                                              // Ignore parsing errors during typing
+                                          }
+                                      }}
+                                      placeholder="Füge hier die JSON-Antwort der KI ein..."
+                                  />
+                                  <button 
+                                      onClick={() => {
+                                          try {
+                                              let cleanJson = aiJsonImport.trim();
+                                              if (cleanJson.startsWith('```json')) {
+                                                  cleanJson = cleanJson.replace(/^```json\n/, '').replace(/\n```$/, '');
+                                              } else if (cleanJson.startsWith('```')) {
+                                                  cleanJson = cleanJson.replace(/^```\n/, '').replace(/\n```$/, '');
+                                              }
+                                              
+                                              const parsed = JSON.parse(cleanJson);
+                                              if (Array.isArray(parsed)) {
+                                                  const valid = parsed.every(q => q.text && Array.isArray(q.options) && typeof q.correctIndex === 'number');
+                                                  if (valid) {
+                                                      const newSet = parsed.map((q: any) => ({...q, category: 'CUSTOM', id: q.id || Math.random().toString()}));
+                                                      const updatedQuestions = [...customQuestions, ...newSet];
+                                                      setCustomQuestions(updatedQuestions);
+                                                      alert(`Fragen wurden erfolgreich importiert!`);
+                                                      setAiJsonImport('');
+                                                      setIsPromptGeneratorOpen(false);
+                                                  } else {
+                                                      alert("Format ungültig. Array von Fragen erwartet.");
+                                                  }
+                                              }
+                                          } catch (e) {
+                                              alert("Ungültiges JSON. Bitte überprüfe das Format.");
+                                          }
+                                      }}
+                                      className="w-full bg-green-600 hover:bg-green-500 text-white font-bold py-3 rounded-xl transition-colors flex items-center justify-center gap-2"
+                                  >
+                                      <Download className="w-5 h-5"/> JSON manuell importieren
+                                  </button>
+                              </div>
+                          </div>
+                      </div>
+                  </div>
+              </div>
+          </div>
+      )}
+
       {/* CUSTOM EDITOR MODAL */}
       {isEditorOpen && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
@@ -454,9 +639,16 @@ const SetupScreen: React.FC<SetupScreenProps> = ({ onStart }) => {
                              </div>
                           ))}
                        </div>
-                       <button onClick={addCustomQuestion} className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2 mt-4">
-                          <Plus className="w-5 h-5"/> Aufgabe hinzufügen
-                       </button>
+                       <div className="flex gap-2 mt-4">
+                           <button onClick={addCustomQuestion} className="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2">
+                              {editQ.id ? <><Edit3 className="w-5 h-5"/> Aktualisieren</> : <><Plus className="w-5 h-5"/> Aufgabe hinzufügen</>}
+                           </button>
+                           {editQ.id && (
+                               <button onClick={cancelEditQuestion} className="bg-slate-700 hover:bg-slate-600 text-white font-bold py-3 px-4 rounded-xl flex justify-center gap-2">
+                                   <X className="w-5 h-5"/>
+                               </button>
+                           )}
+                       </div>
 
                        {/* JSON IMPORT */}
                        <div className="mt-8 pt-6 border-t border-white/10">
@@ -506,14 +698,14 @@ const SetupScreen: React.FC<SetupScreenProps> = ({ onStart }) => {
                     ) : (
                        <div className="space-y-3">
                           {customQuestions.map((q, idx) => (
-                             <div key={q.id || idx} className="bg-slate-800 p-3 rounded-lg border border-slate-700 group">
+                             <div key={q.id || idx} className="bg-slate-800 p-3 rounded-lg border border-slate-700 group cursor-pointer hover:border-blue-500 transition-colors" onClick={() => handleEditQuestion(q)}>
                                 <div className="flex justify-between items-start">
                                    <div>
                                       <div className="font-bold text-sm text-slate-200">{q.text}</div>
                                       {q.expression && <div className="font-mono text-xs text-blue-400 mt-1">{q.expression}</div>}
                                       <div className="text-xs text-slate-500 mt-1">Lösung: {q.options[q.correctIndex]}</div>
                                    </div>
-                                   <button onClick={() => removeCustomQuestion(q.id)} className="text-slate-600 hover:text-red-500 p-1">
+                                   <button onClick={(e) => { e.stopPropagation(); removeCustomQuestion(q.id); }} className="text-slate-600 hover:text-red-500 p-1">
                                       <Trash className="w-4 h-4"/>
                                    </button>
                                 </div>
